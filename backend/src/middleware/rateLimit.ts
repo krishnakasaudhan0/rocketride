@@ -10,6 +10,7 @@ export const loginRateLimiter = rateLimit({
   message: { error: 'Too many login attempts from this IP. Please try again after 15 minutes.' },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
 });
 
 /**
@@ -22,4 +23,5 @@ export const manualDisputeRateLimiter = rateLimit({
   message: { error: 'Too many manual dispute submissions. Please try again after 15 minutes.' },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
 });

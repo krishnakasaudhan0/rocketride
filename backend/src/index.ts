@@ -19,6 +19,9 @@ if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Trust reverse proxy headers from Render/Vercel load balancers
+app.set('trust proxy', 1);
+
 // Configure CORS with allowed origins, Vercel wildcards, and credentials
 const defaultOrigins = [
   'https://disputerocket.vercel.app',
