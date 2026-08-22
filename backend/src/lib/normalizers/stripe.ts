@@ -1,4 +1,5 @@
 export interface UnsavedDispute {
+  userId?: string;
   processor: string;
   externalDisputeId: string;
   chargeId: string;

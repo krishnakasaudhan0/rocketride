@@ -255,6 +255,97 @@ async function runTestSuite() {
     assert(Boolean(setCookie && (setCookie.includes('token=;') || setCookie.includes('Max-Age=0'))), 'Expected expired cookie');
   });
 
+  // 13. Multi-User Isolation Verification (User B does NOT see User A's disputes/logs)
+  const testEmailUserB = `reviewer_b_${Date.now()}@disputerocket.io`;
+  let cookieHeaderUserB = '';
+  let createdDisputeIdUserB = '';
+
+  await test('17. POST /auth/register creates User B account', async () => {
+    const res = await fetch(`${BASE_URL}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: testEmailUserB,
+        password: 'PasswordUserB123!',
+        name: 'Bob Reviewer (User B)',
+      }),
+    });
+    assert(res.status === 201, `Expected 201 Created, got ${res.status}`);
+    const setCookie = res.headers.get('set-cookie');
+    assert(Boolean(setCookie && setCookie.includes('token=')), 'Expected token cookie for User B');
+    cookieHeaderUserB = setCookie!.split(';')[0];
+  });
+
+  await test('18. GET /api/disputes for User B returns EMPTY array (does NOT leak User A logs/disputes)', async () => {
+    const res = await fetch(`${BASE_URL}/api/disputes`, {
+      headers: { Cookie: cookieHeaderUserB },
+    });
+    assert(res.status === 200, `Expected 200, got ${res.status}`);
+    const list = await res.json();
+    assert(Array.isArray(list), 'Expected array of disputes');
+    assert(list.length === 0, `Expected 0 disputes for new User B, but got ${list.length}`);
+  });
+
+  await test('19. GET /api/disputes/:id for User B attempting to view User A dispute returns 404', async () => {
+    const res = await fetch(`${BASE_URL}/api/disputes/${createdDisputeId}`, {
+      headers: { Cookie: cookieHeaderUserB },
+    });
+    assert(res.status === 404, `Expected 404 Not Found for cross-user access, got ${res.status}`);
+  });
+
+  await test('20. User B creates own dispute and only sees their own dispute', async () => {
+    const res = await fetch(`${BASE_URL}/api/disputes/manual`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookieHeaderUserB,
+      },
+      body: JSON.stringify({
+        disputeId: `dp_live_user_b_${Date.now()}`,
+        customerName: 'Marcus Wright',
+        customerEmail: 'marcus@client.com',
+        amount: 899.0,
+        currency: 'USD',
+        processor: 'Shopify',
+        reasonCode: '13.1_MERCHANDISE_NOT_RECEIVED',
+        cardLast4: '1092',
+        businessType: 'E-Commerce',
+      }),
+    });
+    assert(res.status === 200, `Expected 200, got ${res.status}`);
+    const data = await res.json();
+    createdDisputeIdUserB = data.dispute.id;
+
+    const listRes = await fetch(`${BASE_URL}/api/disputes`, {
+      headers: { Cookie: cookieHeaderUserB },
+    });
+    const list = await listRes.json();
+    assert(list.length === 1, `Expected exactly 1 dispute for User B, got ${list.length}`);
+    assert(list[0].id === createdDisputeIdUserB, 'Expected User B dispute ID');
+  });
+
+  await test('21. User A logs back in and only sees User A disputes (no cross-contamination)', async () => {
+    const loginRes = await fetch(`${BASE_URL}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: testEmail,
+        password: testPassword,
+      }),
+    });
+    assert(loginRes.status === 200, `Expected 200, got ${loginRes.status}`);
+    const setCookie = loginRes.headers.get('set-cookie');
+    const userACookie = setCookie!.split(';')[0];
+
+    const listRes = await fetch(`${BASE_URL}/api/disputes`, {
+      headers: { Cookie: userACookie },
+    });
+    const list = await listRes.json();
+    assert(list.length >= 1, 'Expected at least 1 dispute for User A');
+    const hasUserBDispute = list.some((d: any) => d.id === createdDisputeIdUserB);
+    assert(!hasUserBDispute, 'User A must NOT see User B dispute');
+  });
+
   // Summary
   const passed = results.filter((r) => r.passed).length;
   const failed = results.filter((r) => !r.passed).length;

@@ -20,6 +20,7 @@ export async function executeDisputePipeline(
   const dispute = await prisma.dispute.upsert({
     where: { externalDisputeId: unsavedDispute.externalDisputeId },
     create: {
+      userId: unsavedDispute.userId,
       processor: unsavedDispute.processor,
       externalDisputeId: unsavedDispute.externalDisputeId,
       chargeId: unsavedDispute.chargeId,
@@ -35,6 +36,7 @@ export async function executeDisputePipeline(
       status: 'INGESTED',
     },
     update: {
+      ...(unsavedDispute.userId ? { userId: unsavedDispute.userId } : {}),
       amountCents: unsavedDispute.amountCents,
       reasonRaw: unsavedDispute.reasonRaw,
       reasonCanonical: unsavedDispute.reasonCanonical,

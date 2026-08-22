@@ -8,12 +8,13 @@ generator client {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id           String    @id @default(cuid())
+  email        String    @unique
   passwordHash String
   name         String
-  role         String   @default("REVIEWER")
-  createdAt    DateTime @default(now())
+  role         String    @default("REVIEWER")
+  createdAt    DateTime  @default(now())
+  disputes     Dispute[]
 }
 
 model RawWebhookEvent {
@@ -29,6 +30,8 @@ model RawWebhookEvent {
 
 model Dispute {
   id                String            @id @default(cuid())
+  userId            String?
+  user              User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
   processor         String
   externalDisputeId String            @unique
   chargeId          String

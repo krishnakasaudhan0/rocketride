@@ -121,9 +121,13 @@ export function App() {
       } else {
         localStorage.removeItem('disputerocket_token');
         setCurrentUser(null);
+        setDisputes([]);
+        setSelectedDispute(null);
       }
     } catch {
       setCurrentUser(null);
+      setDisputes([]);
+      setSelectedDispute(null);
     } finally {
       setAuthChecking(false);
     }
@@ -152,54 +156,27 @@ export function App() {
         } else {
           setSelectedDispute(null);
         }
+      } else if (res.status === 401) {
+        localStorage.removeItem('disputerocket_token');
+        setCurrentUser(null);
+        setDisputes([]);
+        setSelectedDispute(null);
       }
     } catch {
-      // Offline fallback seed for standalone preview if backend unreachable
-      if (disputes.length === 0) {
-        setDisputes([
-          {
-            id: 'demo_1',
-            processor: 'stripe',
-            externalDisputeId: 'dp_stripe_live_7719',
-            chargeId: 'ch_live_881902',
-            amountCents: 45000,
-            currency: 'USD',
-            reasonRaw: 'fraudulent',
-            reasonCanonical: 'FRAUD',
-            customerName: 'Alexander Vance',
-            customerEmail: 'alex.vance@vancemedia.io',
-            cardLast4: '8819',
-            businessType: 'SaaS',
-            status: 'DRAFTED',
-            evidenceDueBy: new Date(Date.now() + 6 * 86400 * 1000).toISOString(),
-            evidenceScore: 100,
-            rebuttalDraft: `REPRESENTMENT REBUTTAL STATEMENT\nTo: STRIPE Dispute Resolution & Card Issuing Bank\nDispute Reference: dp_stripe_live_7719 | Amount: $450.00 USD\nReason: fraudulent (FRAUD) | Cardholder: Alexander Vance\n\nWe provide conclusive evidence refuting the claim of unauthorized transaction. The purchase was authenticated with full AVS & CVV match on Visa *8819. Server telemetry records 38.5 active usage hours across 14 authenticated sessions with 2-Factor Authentication verified on the cardholder's primary device.\n\nWe respectfully request immediate reversal of this dispute.`,
-            createdAt: new Date().toISOString(),
-            amountFormatted: '$450.00 USD',
-            hoursRemaining: 138,
-            isUrgent: false,
-            telemetrySignals: [
-              {
-                id: 'sig_1',
-                source: 'mock_analytics_db',
-                usageHours: 38.5,
-                twoFactorUsed: true,
-                avsMatch: true,
-                cvvMatch: true,
-                sessionCount: 14,
-                fetchedAt: new Date().toISOString(),
-              },
-            ],
-          },
-        ]);
-      }
+      // In case of network error, do not leak previous user data
+      setDisputes([]);
+      setSelectedDispute(null);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser) {
+      setDisputes([]);
+      setSelectedDispute(null);
+      return;
+    }
     fetchDisputes();
     const interval = setInterval(fetchDisputes, 5000);
     return () => clearInterval(interval);
@@ -233,6 +210,9 @@ export function App() {
         localStorage.setItem('disputerocket_token', data.token);
       }
 
+      // Clear any prior user's dispute logs before updating user state
+      setDisputes([]);
+      setSelectedDispute(null);
       setCurrentUser(data.user);
       setAuthEmail('');
       setAuthPassword('');
@@ -252,6 +232,12 @@ export function App() {
     } catch {}
     localStorage.removeItem('disputerocket_token');
     setCurrentUser(null);
+    setDisputes([]);
+    setSelectedDispute(null);
+    setAuthEmail('');
+    setAuthPassword('');
+    setAuthName('');
+    setAuthError(null);
   };
 
   // Trigger Ingestion Simulator
@@ -618,82 +604,96 @@ export function App() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-900">
-                {disputes.map((d) => (
-                  <tr
-                    key={d.id}
-                    onClick={() => setSelectedDispute(d)}
-                    className="hover:bg-neutral-900/50 transition cursor-pointer group"
-                  >
-                    <td className="p-3 font-bold text-indigo-400 group-hover:text-indigo-300">
-                      {d.externalDisputeId}
-                    </td>
-                    <td className="p-3">
-                      <span className="px-2 py-0.5 rounded text-[10px] bg-neutral-900 text-neutral-300 border border-neutral-800">
-                        {d.reasonCanonical}
-                      </span>
-                    </td>
-                    <td className="p-3 text-neutral-200">
-                      <div>{d.customerName || 'Valued Customer'}</div>
-                      <div className="text-[10px] text-neutral-500">{d.customerEmail}</div>
-                    </td>
-                    <td className="p-3 font-bold text-white">
-                      ${(d.amountCents / 100).toFixed(2)} {d.currency}
-                    </td>
-                    <td className="p-3">
-                      {d.evidenceScore !== null && d.evidenceScore !== undefined ? (
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`font-bold ${
-                              d.evidenceScore >= 50 ? 'text-emerald-400' : 'text-rose-400'
-                            }`}
-                          >
-                            {d.evidenceScore}/100
-                          </span>
-                          <div className="w-12 h-1.5 bg-neutral-800 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full ${
-                                d.evidenceScore >= 50 ? 'bg-emerald-400' : 'bg-rose-400'
-                              }`}
-                              style={{ width: `${d.evidenceScore}%` }}
-                            />
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="text-neutral-600">Pending</span>
-                      )}
-                    </td>
-                    <td className="p-3">
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
-                          d.status === 'DRAFTED'
-                            ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/30'
-                            : d.status === 'NEEDS_REVIEW'
-                            ? 'bg-rose-950/60 text-rose-400 border border-rose-500/30'
-                            : d.status === 'SUBMITTED'
-                            ? 'bg-indigo-950/60 text-indigo-400 border border-indigo-500/30'
-                            : 'bg-neutral-900 text-neutral-400 border border-neutral-800'
-                        }`}
-                      >
-                        {d.status}
-                      </span>
-                    </td>
-                    <td className="p-3 text-neutral-400 flex items-center gap-1">
-                      <Clock className="h-3 w-3 text-neutral-500" />
-                      <span>{d.hoursRemaining ?? 120}h left</span>
-                    </td>
-                    <td className="p-3 text-right">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedDispute(d);
-                        }}
-                        className="text-[11px] text-neutral-400 hover:text-white underline underline-offset-4"
-                      >
-                        Inspect
-                      </button>
+                {disputes.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="p-8 text-center text-neutral-500 font-mono text-xs">
+                      <div className="flex flex-col items-center justify-center gap-2 py-4">
+                        <Sparkles className="h-6 w-6 text-indigo-400/60" />
+                        <span className="text-neutral-300 font-semibold">No active dispute logs for this account</span>
+                        <span className="text-neutral-500 text-[11px] max-w-sm">
+                          Use the Stripe Webhook Intake Simulator above or click "Manual Override" to ingest your first dispute case.
+                        </span>
+                      </div>
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  disputes.map((d) => (
+                    <tr
+                      key={d.id}
+                      onClick={() => setSelectedDispute(d)}
+                      className="hover:bg-neutral-900/50 transition cursor-pointer group"
+                    >
+                      <td className="p-3 font-bold text-indigo-400 group-hover:text-indigo-300">
+                        {d.externalDisputeId}
+                      </td>
+                      <td className="p-3">
+                        <span className="px-2 py-0.5 rounded text-[10px] bg-neutral-900 text-neutral-300 border border-neutral-800">
+                          {d.reasonCanonical}
+                        </span>
+                      </td>
+                      <td className="p-3 text-neutral-200">
+                        <div>{d.customerName || 'Valued Customer'}</div>
+                        <div className="text-[10px] text-neutral-500">{d.customerEmail}</div>
+                      </td>
+                      <td className="p-3 font-bold text-white">
+                        ${(d.amountCents / 100).toFixed(2)} {d.currency}
+                      </td>
+                      <td className="p-3">
+                        {d.evidenceScore !== null && d.evidenceScore !== undefined ? (
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`font-bold ${
+                                d.evidenceScore >= 50 ? 'text-emerald-400' : 'text-rose-400'
+                              }`}
+                            >
+                              {d.evidenceScore}/100
+                            </span>
+                            <div className="w-12 h-1.5 bg-neutral-800 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full ${
+                                  d.evidenceScore >= 50 ? 'bg-emerald-400' : 'bg-rose-400'
+                                }`}
+                                style={{ width: `${d.evidenceScore}%` }}
+                              />
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-neutral-600">Pending</span>
+                        )}
+                      </td>
+                      <td className="p-3">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
+                            d.status === 'DRAFTED'
+                              ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/30'
+                              : d.status === 'NEEDS_REVIEW'
+                              ? 'bg-rose-950/60 text-rose-400 border border-rose-500/30'
+                              : d.status === 'SUBMITTED'
+                              ? 'bg-indigo-950/60 text-indigo-400 border border-indigo-500/30'
+                              : 'bg-neutral-900 text-neutral-400 border border-neutral-800'
+                          }`}
+                        >
+                          {d.status}
+                        </span>
+                      </td>
+                      <td className="p-3 text-neutral-400 flex items-center gap-1">
+                        <Clock className="h-3 w-3 text-neutral-500" />
+                        <span>{d.hoursRemaining ?? 120}h left</span>
+                      </td>
+                      <td className="p-3 text-right">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedDispute(d);
+                          }}
+                          className="text-[11px] text-neutral-400 hover:text-white underline underline-offset-4"
+                        >
+                          Inspect
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

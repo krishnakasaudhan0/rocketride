@@ -29,7 +29,11 @@ webhookRouter.post('/stripe', async (req: Request, res: Response): Promise<void>
   const isSecretConfigured = Boolean(webhookSecret && webhookSecret !== DEFAULT_PLACEHOLDER_SECRET);
 
   // 1. Signature Verification Boundary
-  if (isSecretConfigured && sig && !isBypassAllowed) {
+  if (isSecretConfigured && !isBypassAllowed) {
+    if (!sig) {
+      res.status(400).json({ error: 'Webhook Error: Missing stripe-signature header' });
+      return;
+    }
     try {
       event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret!);
     } catch (err: any) {
@@ -45,8 +49,6 @@ webhookRouter.post('/stripe', async (req: Request, res: Response): Promise<void>
       );
     } else if (isBypassAllowed) {
       console.warn('[Stripe Webhook] Notice: Bypassing signature verification via ALLOW_UNSIGNED_WEBHOOKS.');
-    } else if (!sig) {
-      console.warn('[Stripe Webhook] Notice: Missing stripe-signature header. Processing in test mode.');
     }
 
     try {

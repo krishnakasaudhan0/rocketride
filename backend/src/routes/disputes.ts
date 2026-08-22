@@ -7,11 +7,13 @@ export const disputeRouter = Router();
 
 /**
  * GET /api/disputes - Operations Dashboard View
- * Lists all Dispute rows with status badges, evidenceScore, countdown, and canonical reason.
+ * Lists all Dispute rows for the current authenticated user with status badges, evidenceScore, countdown, and canonical reason.
  */
 disputeRouter.get('/', async (req: Request, res: Response) => {
   try {
+    const userId = req.user?.id;
     const disputes = await prisma.dispute.findMany({
+      where: userId ? { userId } : {},
       orderBy: { createdAt: 'desc' },
       include: { telemetrySignals: true },
     });
@@ -44,8 +46,12 @@ disputeRouter.get('/', async (req: Request, res: Response) => {
 disputeRouter.get('/:id', async (req: Request, res: Response) => {
   try {
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-    const dispute = await prisma.dispute.findUnique({
-      where: { id },
+    const userId = req.user?.id;
+    const dispute = await prisma.dispute.findFirst({
+      where: {
+        id,
+        ...(userId ? { userId } : {}),
+      },
       include: { telemetrySignals: true },
     });
 
@@ -69,8 +75,14 @@ disputeRouter.post('/:id/approve', async (req: Request, res: Response) => {
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const { notes, rebuttalEdits } = req.body;
     const reviewer = req.user?.name || req.user?.email || 'Risk Compliance Officer';
+    const userId = req.user?.id;
 
-    const dispute = await prisma.dispute.findUnique({ where: { id } });
+    const dispute = await prisma.dispute.findFirst({
+      where: {
+        id,
+        ...(userId ? { userId } : {}),
+      },
+    });
     if (!dispute) {
       res.status(404).json({ error: 'Dispute not found' });
       return;
@@ -139,6 +151,7 @@ disputeRouter.post('/manual', manualDisputeRateLimiter, async (req: Request, res
     const amountCents = Math.round((parseFloat(amount) || 450) * 100);
 
     const unsavedDispute: UnsavedDispute = {
+      userId: req.user?.id,
       processor: (processor || 'manual').toLowerCase(),
       externalDisputeId,
       chargeId: `ch_manual_${externalDisputeId.slice(-6)}`,
