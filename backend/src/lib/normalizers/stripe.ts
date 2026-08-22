@@ -24,10 +24,16 @@ export function mapStripeReasonToCanonical(
   const reason = (rawReason || '').toLowerCase().trim();
   switch (reason) {
     case 'fraudulent':
+    case '10.4_fraud_card_absent':
+    case 'fraud':
+    case 'unrecognized':
       return 'FRAUD';
     case 'product_not_received':
+    case '13.1_merchandise_not_received':
+    case 'merchandise_not_received':
       return 'PRODUCT_NOT_RECEIVED';
     case 'product_unacceptable':
+    case 'not_as_described':
       return 'PRODUCT_NOT_AS_DESCRIBED';
     case 'duplicate':
     case 'credit_not_processed':
@@ -35,6 +41,8 @@ export function mapStripeReasonToCanonical(
     case 'subscription_canceled':
     case 'subscription_cancelled':
       return 'SUBSCRIPTION_CANCELLED';
+    case 'general':
+    case 'customer_initiated':
     default:
       return 'OTHER';
   }
@@ -44,8 +52,8 @@ export function mapStripeReasonToCanonical(
  * Normalizes a raw Stripe dispute object or webhook payload into our canonical Dispute schema.
  */
 export function normalizeStripeDispute(rawPayload: any): UnsavedDispute {
-  // Support both dispute object directly or nested event data.object
-  const dispute = rawPayload?.data?.object ? rawPayload.data.object : rawPayload;
+  // Support dispute object directly, nested event data.object, or raw webhook
+  const dispute = rawPayload?.data?.object ? rawPayload.data.object : rawPayload?.data ? rawPayload.data : rawPayload;
 
   const rawReason = dispute.reason || 'other';
   const reasonCanonical = mapStripeReasonToCanonical(rawReason);

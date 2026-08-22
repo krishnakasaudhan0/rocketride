@@ -93,6 +93,7 @@ disputeRouter.post('/:id/approve', async (req: Request, res: Response) => {
       data: {
         status: 'SUBMITTED',
         reviewedBy: reviewer,
+        userId: userId || dispute.userId,
         reviewNotes: notes || 'Verified evidence exhibits and signed off.',
         rebuttalDraft: rebuttalEdits || dispute.rebuttalDraft,
       },

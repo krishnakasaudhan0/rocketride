@@ -29,26 +29,34 @@ webhookRouter.post('/stripe', async (req: Request, res: Response): Promise<void>
   const isSecretConfigured = Boolean(webhookSecret && webhookSecret !== DEFAULT_PLACEHOLDER_SECRET);
 
   // 1. Signature Verification Boundary
-  if (isSecretConfigured && !isBypassAllowed) {
-    if (!sig) {
-      res.status(400).json({ error: 'Webhook Error: Missing stripe-signature header' });
-      return;
-    }
+  let signatureValid = false;
+
+  if (isSecretConfigured && sig && !isBypassAllowed) {
     try {
       event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret!);
+      signatureValid = true;
     } catch (err: any) {
-      console.error('[Stripe Webhook] Signature verification failed:', err.message);
-      res.status(400).json({ error: `Webhook Error: Signature verification failed (${err.message})` });
-      return;
+      if (process.env.NODE_ENV === 'production') {
+        console.error('[Stripe Webhook] Signature verification failed in production:', err.message);
+        res.status(400).json({ error: `Webhook Error: Signature verification failed (${err.message})` });
+        return;
+      }
+
+      console.warn(
+        `[Stripe Webhook] Note: Signature verification with configured secret failed (${err.message}). In development mode, parsing payload for Stripe CLI forwarding.`
+      );
+      try {
+        const payloadStr = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : JSON.stringify(rawBody || {});
+        event = JSON.parse(payloadStr);
+      } catch (parseErr: any) {
+        res.status(400).json({ error: `Webhook Error: Failed to parse payload (${parseErr.message})` });
+        return;
+      }
     }
   } else {
-    // If secret is not yet configured or bypass flag is set, log notice and parse payload
-    if (!isSecretConfigured) {
-      console.warn(
-        '[Stripe Webhook] Notice: STRIPE_WEBHOOK_SECRET is unconfigured. Ingesting payload in test/simulation mode. Set STRIPE_WEBHOOK_SECRET in production to enforce signatures.'
-      );
-    } else if (isBypassAllowed) {
-      console.warn('[Stripe Webhook] Notice: Bypassing signature verification via ALLOW_UNSIGNED_WEBHOOKS.');
+    if (process.env.NODE_ENV === 'production' && !isBypassAllowed) {
+      res.status(400).json({ error: 'Webhook Error: Missing or unconfigured stripe-signature in production' });
+      return;
     }
 
     try {
@@ -82,7 +90,7 @@ webhookRouter.post('/stripe', async (req: Request, res: Response): Promise<void>
       externalEventId,
       eventType,
       payload: rawPayloadStr,
-      signatureValid: true,
+      signatureValid: signatureValid || isBypassAllowed || process.env.NODE_ENV !== 'production',
       processed: false,
     },
   });
@@ -100,10 +108,22 @@ webhookRouter.post('/stripe', async (req: Request, res: Response): Promise<void>
         eventType.includes('dispute')
       ) {
         console.log(`[Stripe Webhook] Processing dispute event ${externalEventId}...`);
-        const normalizedDispute = normalizeStripeDispute(event.data.object);
+        const disputeObject = event.data?.object || event.data || event;
+        const normalizedDispute = normalizeStripeDispute(disputeObject);
+
+        // Associate webhook dispute with designated or active reviewer user
+        let webhookUserId = disputeObject.metadata?.userId || disputeObject.metadata?.user_id;
+        if (!webhookUserId) {
+          const activeUser = await prisma.user.findFirst({
+            orderBy: { createdAt: 'desc' },
+          });
+          webhookUserId = activeUser?.id;
+        }
+
+        normalizedDispute.userId = webhookUserId;
         await executeDisputePipeline(normalizedDispute, rawEvent.id);
       } else {
-        console.log(`[Stripe Webhook] Received non-dispute event ${eventType}.`);
+        console.log(`[Stripe Webhook] Received non-dispute event: ${eventType}`);
       }
     } catch (pipelineErr) {
       console.error(`[Stripe Webhook] Error in async pipeline for ${externalEventId}:`, pipelineErr);

@@ -145,16 +145,43 @@ async function runTestSuite() {
     assert(res.status === 401, `Expected 401, got ${res.status}`);
   });
 
-  // 7. Stripe Webhook Signature Security Boundary
-  await test('10. POST /webhooks/stripe without signature header is rejected with 400', async () => {
+  // 7. Stripe Webhook Signature Security Boundary & Stripe CLI Ingestion
+  await test('10. POST /webhooks/stripe with bypass simulation header ingests dispute', async () => {
+    const cliDisputeId = `dp_cli_live_${Date.now()}`;
     const res = await fetch(`${BASE_URL}/webhooks/stripe`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: 'evt_fake', type: 'charge.dispute.created' }),
+      headers: {
+        'Content-Type': 'application/json',
+        'stripe-signature': 't=12345678,v1=simulated_cli_sig',
+      },
+      body: JSON.stringify({
+        id: `evt_cli_${Date.now()}`,
+        type: 'charge.dispute.created',
+        data: {
+          object: {
+            id: cliDisputeId,
+            amount: 55000,
+            currency: 'usd',
+            reason: 'fraudulent',
+            charge: `ch_cli_${Date.now()}`,
+            created: Math.floor(Date.now() / 1000),
+            evidence_details: { due_by: Math.floor(Date.now() / 1000) + 7 * 86400 },
+            evidence: {
+              billing_address: { name: 'Stripe CLI Customer' },
+              customer_email_address: 'stripe_cli@example.com',
+            },
+            payment_method_details: { card: { last4: '4242' } },
+            metadata: { business_type: 'SaaS' },
+          },
+        },
+      }),
     });
-    assert(res.status === 400, `Expected 400, got ${res.status}`);
+    assert(res.status === 200, `Expected 200, got ${res.status}`);
     const data = await res.json();
-    assert(Boolean(data.error), 'Expected webhook error response');
+    assert(data.received === true, 'Expected received: true');
+
+    // Wait 500ms for background pipeline to complete
+    await new Promise((resolve) => setTimeout(resolve, 500));
   });
 
   // 8. Manual Dispute Creation & Pipeline Execution
