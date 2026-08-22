@@ -19,19 +19,41 @@ if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Configure CORS with allowed origins and credentials
-const rawAllowedOrigins =
-  process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173';
-const allowedOrigins = rawAllowedOrigins.split(',').map((origin) => origin.trim()).filter(Boolean);
+// Configure CORS with allowed origins, Vercel wildcards, and credentials
+const defaultOrigins = [
+  'https://disputerocket.vercel.app',
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:3000',
+];
+
+const envAllowed = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim().replace(/\/$/, ''))
+  .filter(Boolean);
+
+const allowedOrigins = Array.from(new Set([...defaultOrigins, ...envAllowed]));
 
 app.use(
   cors({
     origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-      // Allow requests with no origin (like mobile apps, curl, server-to-server) or matching allowed origins
-      if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      // Allow requests with no origin (like mobile apps, curl, server-to-server)
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      const normalizedOrigin = origin.replace(/\/$/, '');
+      const isAllowed =
+        allowedOrigins.includes(normalizedOrigin) ||
+        normalizedOrigin.endsWith('.vercel.app') ||
+        process.env.NODE_ENV !== 'production';
+
+      if (isAllowed) {
         callback(null, true);
       } else {
-        callback(new Error(`CORS Error: Origin ${origin} is not allowed by allowlist.`));
+        console.warn(`[CORS Blocked] Origin "${origin}" is not in allowlist:`, allowedOrigins);
+        callback(null, false);
       }
     },
     credentials: true,
