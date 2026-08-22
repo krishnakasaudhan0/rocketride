@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
@@ -26,7 +26,7 @@ const allowedOrigins = rawAllowedOrigins.split(',').map((origin) => origin.trim(
 
 app.use(
   cors({
-    origin: (origin, callback) => {
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
       // Allow requests with no origin (like mobile apps, curl, server-to-server) or matching allowed origins
       if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
         callback(null, true);
@@ -56,7 +56,7 @@ app.use('/webhooks', webhookRouter);
 app.use('/internal', requireAuth, analyticsRouter);
 app.use('/api/disputes', requireAuth, disputeRouter);
 
-app.get('/health', (_req, res) => {
+app.get('/health', (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
     service: 'DisputeRocket Ingestion Engine',
