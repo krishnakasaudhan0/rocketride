@@ -141,9 +141,16 @@ export function App() {
       if (res.ok) {
         const data = await res.json();
         setDisputes(data);
-        if (selectedDispute) {
-          const updated = data.find((d: DisputeItem) => d.id === selectedDispute.id);
-          if (updated) setSelectedDispute(updated);
+        if (data.length > 0) {
+          if (!selectedDispute) {
+            setSelectedDispute(data[0]);
+          } else {
+            const updated = data.find((d: DisputeItem) => d.id === selectedDispute.id);
+            if (updated) setSelectedDispute(updated);
+            else setSelectedDispute(data[0]);
+          }
+        } else {
+          setSelectedDispute(null);
         }
       }
     } catch {

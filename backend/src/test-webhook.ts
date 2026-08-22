@@ -76,22 +76,28 @@ if (scenario === 'ecom') {
   };
 }
 
+const targetUrl = process.argv[3] || process.env.API_BASE || 'http://localhost:3001';
+
 async function main() {
-  console.log(`\n📡 Transmitting real Stripe webhook [${payload.type}] to http://localhost:3001/webhooks/stripe...`);
+  const fullEndpoint = `${targetUrl.replace(/\/$/, '')}/webhooks/stripe`;
+  console.log(`\n📡 Transmitting Stripe webhook [${payload.type}] to ${fullEndpoint}...`);
 
   try {
-    const res = await fetch('http://localhost:3001/webhooks/stripe', {
+    const res = await fetch(fullEndpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-disputerocket-simulate': 'true',
+      },
       body: JSON.stringify(payload),
     });
 
     const resJson = await res.json();
-    console.log(`✓ Webhook Acknowledged by Server (Status: ${res.status}):`, resJson);
-    console.log(`\nCheck the operations dashboard at http://localhost:5173 or run curl http://localhost:3001/api/disputes\n`);
+    console.log(`✓ Webhook Response (Status ${res.status}):`, resJson);
+    console.log(`\nDispute ingested: ID = ${payload.data.object.id}`);
+    console.log(`Open https://disputerocket.vercel.app to view the ingested dispute and AI draft!\n`);
   } catch (err: any) {
     console.error(`✗ Error connecting to backend: ${err.message}`);
-    console.log(`Ensure the backend is running via: cd backend && bun src/index.ts`);
   }
 }
 

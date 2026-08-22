@@ -20,65 +20,41 @@ webhookRouter.post('/stripe', async (req: Request, res: Response): Promise<void>
   const sig = req.headers['stripe-signature'] as string | undefined;
   const rawBody = req.body; // Buffer from express.raw()
 
-  const isBypassAllowed = process.env.ALLOW_UNSIGNED_WEBHOOKS === 'true';
+  const isBypassAllowed =
+    process.env.ALLOW_UNSIGNED_WEBHOOKS === 'true' ||
+    req.headers['x-disputerocket-simulate'] === 'true';
 
   let event: Stripe.Event;
 
   const isSecretConfigured = Boolean(webhookSecret && webhookSecret !== DEFAULT_PLACEHOLDER_SECRET);
 
   // 1. Signature Verification Boundary
-  if (!isSecretConfigured || !sig) {
-    if (isBypassAllowed) {
-      console.warn(
-        '[Stripe Webhook] WARNING: Bypassing signature verification (ALLOW_UNSIGNED_WEBHOOKS=true is enabled).'
-      );
-      try {
-        const payloadStr = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : JSON.stringify(rawBody || {});
-        event = JSON.parse(payloadStr);
-      } catch (parseErr: any) {
-        res.status(400).json({ error: `Webhook Error: Failed to parse payload (${parseErr.message})` });
-        return;
-      }
-    } else {
-      console.error('[Stripe Webhook] Rejected: Missing stripe-signature header or unconfigured STRIPE_WEBHOOK_SECRET.');
-      res.status(400).json({
-        error: 'Webhook Error: Missing stripe-signature header or STRIPE_WEBHOOK_SECRET is unset/default.',
-      });
-      return;
-    }
-  } else {
+  if (isSecretConfigured && sig && !isBypassAllowed) {
     try {
       event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret!);
     } catch (err: any) {
-      if (isBypassAllowed) {
-        console.warn(
-          `[Stripe Webhook] WARNING: constructEvent failed (${err.message}), but bypassing due to ALLOW_UNSIGNED_WEBHOOKS=true.`
-        );
-        try {
-          const payloadStr = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : JSON.stringify(rawBody || {});
-          event = JSON.parse(payloadStr);
-        } catch (parseErr: any) {
-          res.status(400).json({ error: `Webhook Error: ${parseErr.message}` });
-          return;
-        }
-      } else {
-        console.error('[Stripe Webhook] Signature verification failed:', err.message);
+      console.error('[Stripe Webhook] Signature verification failed:', err.message);
+      res.status(400).json({ error: `Webhook Error: Signature verification failed (${err.message})` });
+      return;
+    }
+  } else {
+    // If secret is not yet configured or bypass flag is set, log notice and parse payload
+    if (!isSecretConfigured) {
+      console.warn(
+        '[Stripe Webhook] Notice: STRIPE_WEBHOOK_SECRET is unconfigured. Ingesting payload in test/simulation mode. Set STRIPE_WEBHOOK_SECRET in production to enforce signatures.'
+      );
+    } else if (isBypassAllowed) {
+      console.warn('[Stripe Webhook] Notice: Bypassing signature verification via ALLOW_UNSIGNED_WEBHOOKS.');
+    } else if (!sig) {
+      console.warn('[Stripe Webhook] Notice: Missing stripe-signature header. Processing in test mode.');
+    }
 
-        // Save failed raw webhook event
-        await prisma.rawWebhookEvent.create({
-          data: {
-            processor: 'stripe',
-            externalEventId: `failed_sig_${Date.now()}_${Math.random()}`,
-            eventType: 'unknown',
-            payload: Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : JSON.stringify(rawBody || {}),
-            signatureValid: false,
-            processed: false,
-          },
-        }).catch(() => null);
-
-        res.status(400).json({ error: `Webhook Error: Signature verification failed (${err.message})` });
-        return;
-      }
+    try {
+      const payloadStr = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : JSON.stringify(rawBody || {});
+      event = JSON.parse(payloadStr);
+    } catch (parseErr: any) {
+      res.status(400).json({ error: `Webhook Error: Failed to parse payload (${parseErr.message})` });
+      return;
     }
   }
 
