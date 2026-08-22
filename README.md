@@ -1,137 +1,238 @@
 # 🚀 DisputeRocket: Autonomous Payment Dispute Defense & Evidence Packaging Platform
 
 > **Rocket Ride Hackathon Project**  
-> Built with **RocketRide AI Pipeline Builder** & **Google Gemini LLM Engine**
+> Autonomous Chargeback Representment, Multi-Source Telemetry Aggregation, Deterministic Evidence Scoring, and Gemini AI Legal Evidence Compilation.
+
+[![Status](https://img.shields.io/badge/Status-Production%20Ready-emerald)]()
+[![AI Engine](https://img.shields.io/badge/AI%20Engine-RocketRide%20%2B%20Google%20Gemini%202.5%20Flash-indigo)]()
+[![Stack](https://img.shields.io/badge/Stack-React%20%7C%20Express%20%7C%20Prisma%20%7C%20FastAPI-blue)]()
+[![Database](https://img.shields.io/badge/Database-PostgreSQL%20(Neon)-cyan)]()
 
 ---
 
-## 📌 Problem Statement
+## 📑 Table of Contents
 
-Online stores and SaaS businesses lose billions annually to fraudulent and invalid payment disputes (chargebacks). When a dispute arrives:
-- Evidence is scattered across disparate systems: order databases, session telemetry logs, carrier fulfillment systems, and customer communication records.
-- Payment processors (Stripe, Shopify, PayPal, Adyen) enforce strict formatting guidelines and tight submission deadlines (often under 7-14 days).
-- Merchants struggle to compile legally compelling representment letters before deadlines, leading to forfeited revenue.
-- Prior wins and losses are rarely codified into structured learning loops to improve future rebuttals.
-
----
-
-## 💡 Solution: DisputeRocket
-
-**DisputeRocket** is an end-to-end autonomous dispute defense pipeline that:
-1. **Tracks & Ingests Multi-Source Signals**: Correlates dispute alerts, order receipts, AVS/CVV checks, user session telemetry (IPs, 2FA, feature usage hours), and delivery proofs (GPS coordinates, carrier signatures).
-2. **Builds a Unified Per-Customer Record**: Links past dispute outcomes, customer lifetime value, and winning rebuttal patterns.
-3. **Compiles Evidence with RocketRide & Gemini**: Executes dedicated `.pipe` pipelines powered by Google Gemini to produce processor-tailored rebuttal statements, chronologies, and evidentiary exhibits.
-4. **Mandatory Human-in-the-Loop Review Gate**: Enforces human reviewer verification, edits, and sign-offs before gateway submission with real-time deadline SLA tracking.
-5. **Submits Before Deadline**: Transmits the verified package directly to the payment processor.
-6. **Continual Learning Loop**: Records processor verdicts (Won/Lost) and extracts winning tactics via a learning feedback pipeline to continuously boost merchant win rates.
-7. **Monetization Engine**: Automatically bills merchants based on a **fixed fee per dispute job** ($25.00) plus a **contingency success fee** (% of recovered capital, e.g. 15%).
+1. [Executive Summary & Problem Statement](#-executive-summary--problem-statement)
+2. [End-to-End System Architecture](#-end-to-end-system-architecture)
+3. [The 8-Stage Dispute Defense Lifecycle](#-the-8-stage-dispute-defense-lifecycle)
+4. [RocketRide AI Pipelines (`.pipe` Specifications)](#-rocketride-ai-pipelines-pipe-specifications)
+5. [Multi-Source Data Aggregation & Telemetry](#-multi-source-data-aggregation--telemetry)
+6. [Evidence Scoring Engine & Gemini Rebuttal Drafting](#-evidence-scoring-engine--gemini-rebuttal-drafting)
+7. [Mandatory Human-in-the-Loop (HITL) Gate](#-mandatory-human-in-the-loop-hitl-gate)
+8. [Stripe CLI & Webhook Receiver](#-stripe-cli--webhook-receiver)
+9. [Commercial Monetization & ROI Model](#-commercial-monetization--roi-model)
+10. [Quickstart & Execution Guide](#-quickstart--execution-guide)
+11. [Verification & Test Suites](#-verification--test-suites)
 
 ---
 
-## 🏗️ Architecture & Pipeline Overview
+## 📌 Executive Summary & Problem Statement
+
+Online merchants and SaaS businesses forfeit over **$100 Billion annually** to invalid and fraudulent payment disputes (chargebacks). When a dispute occurs:
+
+- **Siloed Evidence**: Transaction receipts, AVS/CVV matching, 2FA logs, IP geolocation records, session telemetry, and carrier proofs of delivery reside across disconnected databases.
+- **Strict Gateway Deadlines**: Processors (Stripe, PayPal, Shopify, Adyen) enforce statutory submission deadlines (7–14 days). Missed deadlines result in automatic forfeiture of funds.
+- **Generic Rebuttals**: Manual defense letters lack network-specific rule citations (Visa/Mastercard Representment Guidelines).
+- **Missing Learning Loops**: Post-dispute outcomes (won/lost verdicts) are not indexed into heuristics to improve future defense packs.
+
+**DisputeRocket** resolves these challenges by autonomously tracking dispute webhooks, aggregating multi-system telemetry, calculating deterministic evidence scores, synthesizing legally compelling representment packages via Google Gemini, enforcing mandatory human review, transmitting directly to processor APIs, and continuously training on processor outcomes.
+
+---
+
+## 🏗️ End-to-End System Architecture
+
+```mermaid
+flowchart TD
+    subgraph INTAKE["1. Real-time Ingestion & Signals"]
+        A1["Dispute Alert Webhook\n(Stripe, Shopify, PayPal)"] --> AGG["Multi-Source Data Aggregator"]
+        A2["Order & Payment Receipt\n(AVS / CVV2 Match)"] --> AGG
+        A3["User Session Telemetry\n(IP Geolocation, 2FA, Active Hours)"] --> AGG
+        A4["Carrier Logistics & GPS\n(FedEx, UPS, Delivery Signature)"] --> AGG
+        A5["Historical Customer Profile\n(LTV, Past Win Rates, Trust Score)"] --> AGG
+    end
+
+    AGG --> DOSSIER["Unified Customer Dispute Dossier"]
+
+    subgraph AI_ENGINE["2. RocketRide AI & Google Gemini"]
+        DOSSIER --> PIPE_TRIAGE["dispute_triage.pipe\n(Triage & Gap Detection)"]
+        PIPE_TRIAGE --> SCORE["Deterministic Scoring Engine\n(Evidence Score 0 - 100)"]
+        SCORE --> PIPE_DEFENSE["dispute_defense.pipe\n(Gemini 2.5 Flash Synthesis)"]
+        PIPE_DEFENSE --> PKG["Complete Legal Evidence Package\n• Executive Rebuttal Summary\n• Chronological Audit Timeline\n• Exhibits A, B, C\n• Card Network Representment Statement"]
+    end
+
+    subgraph HITL["3. Mandatory Human-in-the-Loop Review"]
+        PKG --> QUEUE["Operations Queue & SLA Deadline Clock"]
+        QUEUE --> HUMAN["Human Reviewer Verification\n(Edit Letter & 1-Click Sign-Off)"]
+    end
+
+    subgraph SUBMIT["4. Payment Gateway Transmission"]
+        HUMAN --> API_SUBMIT["Direct Gateway API Submission\n(Stripe / Shopify / PayPal)"]
+    end
+
+    subgraph FEEDBACK["5. Outcome Feedback & Monetization"]
+        API_SUBMIT --> VERDICT["Processor Verdict\n(WON / LOST)"]
+        VERDICT --> PIPE_LEARN["dispute_learning.pipe\n(Extract Winning Heuristics)"]
+        PIPE_LEARN --> KB["Update Merchant Knowledge Base"]
+        VERDICT --> REV["Revenue Engine\n($25 Base Fee + 15% Contingency Fee)"]
+    end
+```
+
+---
+
+## 🔄 The 8-Stage Dispute Defense Lifecycle
 
 ```
-[Dispute Webhook / Alert] ──┐
-[Store Orders & AVS/CVV]  ──┼──> [Data Aggregator] ──> [Per-Customer Dossier]
-[Telemetry & 2FA Logs]    ──┤
-[Carrier Delivery / GPS]  ──┘
-                                        │
-                                        ▼
-                   [RocketRide Pipeline: dispute_triage.pipe]
-                         (Reason Code Triage & Gap Detection)
-                                        │
-                                        ▼
-                   [RocketRide Pipeline: dispute_defense.pipe]
-                        (Powered by Google Gemini 2.0 Flash)
-                                        │
-                                        ▼
-                         [Structured Evidence Package]
-                     (Executive Summary, Exhibits A-C, Timeline)
-                                        │
-                                        ▼
-                    [Human-in-the-Loop Review Gate (HITL)]
-                        (Inspector Verification & Sign-Off)
-                                        │
-                                        ▼
-                      [Automated Processor Submission]
-                         (Stripe / Shopify / PayPal)
-                                        │
-                                        ▼
-                           [Dispute Verdict: WON/LOST]
-                                        │
-             ┌──────────────────────────┴──────────────────────────┐
-             ▼                                                     ▼
- [dispute_learning.pipe]                               [Revenue Engine]
-(Feedback Loop & Heuristics)                     (Contingency Fee + Flat Fee)
+[ Webhook Ingest ] ➔ [ Multi-System Correlate ] ➔ [ AI Triage ] ➔ [ Evidence Draft ] 
+       ▲                                                                   │
+       └───────────────────────────────────────────────────────────────────┘
+                                           │
+                                           ▼
+[ Outcome Learning ] ◄── [ Gateway Submit ] ◄── [ Human Review Gate ]
 ```
+
+1. **Idempotent Ingestion**: Listens for webhooks (`charge.dispute.created`, `charge.dispute.updated`) or manual overrides, validating cryptographic HMAC-SHA256 signatures and recording raw events.
+2. **Multi-System Correlation**: Correlates order receipts, billing addresses, AVS/CVV status, 2FA logins, active application hours (SaaS), and carrier tracking/GPS (E-commerce) into a unified defense dossier.
+3. **AI Triage & Gap Detection**: Evaluates reason codes (e.g. `10.4_FRAUD_CARD_ABSENT`, `13.1_MERCHANDISE_NOT_RECEIVED`), assesses win probability, and flags evidentiary gaps.
+4. **Deterministic Evidence Scoring**: Calculates a rigorous 0–100 evidence strength score across payment authentication, telemetry persistence, and delivery verification.
+5. **Legal Evidence Synthesis**: Powered by Google Gemini (`gemini-2.5-flash`), generates structured Exhibits (A, B, C), a timestamped audit trail, and a formal card-network rebuttal letter.
+6. **Mandatory Human-in-the-Loop Gate**: Enforces inspector verification, rebuttal editing, and reviewer attribution with SLA deadline countdowns (`<48h` urgency badges). Direct submission is hard-blocked until signed off.
+7. **Automated Gateway Transmission**: Transmits the package directly to processor APIs (Stripe, PayPal, Shopify) before statutory deadlines and issues cryptographic submission receipts.
+8. **Outcome Feedback & Continual Learning**: Ingests `WON` / `LOST` verdicts, distills effective rebuttal arguments via `dispute_learning.pipe`, and updates customer trust scores.
 
 ---
 
-## 📂 RocketRide Pipelines (`.pipe` Files)
+## 📂 RocketRide AI Pipelines (`.pipe` Specifications)
 
 All pipeline definitions adhere strictly to RocketRide standards (UUID project IDs, component ordering, typed lanes, and profile configurations):
 
-| Pipeline File | Source | Key Components | Output Lane | Purpose |
+| Pipeline File | Source Node | LLM Provider | Output Lane | Primary Purpose |
 | :--- | :--- | :--- | :--- | :--- |
-| `dispute_defense.pipe` | `chat` | `llm_gemini` (`gemini-2_0-flash`) | `answers` | Generates full evidence package, exhibits, and processor rebuttal statement |
-| `dispute_triage.pipe` | `chat` | `llm_gemini` (`gemini-2_0-flash`) | `answers` | Performs intake triage, assesses win probability, and flags evidence gaps |
-| `dispute_learning.pipe` | `chat` | `llm_gemini` (`gemini-2_0-flash`) | `answers` | Analyzes processor decisions and distills winning heuristics for future disputes |
-| `chat.pipe` | `chat` | `llm_gemini` (`gemini-2_0-flash`) | `answers` | General-purpose interactive Q&A pipeline |
+| [`dispute_defense.pipe`](file:///Users/krishnakasaudhan/rocketride2/dispute_defense.pipe) | `chat` | `llm_gemini` (`gemini-2_5-flash`) | `answers` | Compiles full representment package, Exhibits A-C, timeline, and rebuttal letter. |
+| [`dispute_triage.pipe`](file:///Users/krishnakasaudhan/rocketride2/dispute_triage.pipe) | `chat` | `llm_gemini` (`gemini-2_5-flash`) | `answers` | Classifies reason code, calculates win probability (0-100%), and flags evidence gaps. |
+| [`dispute_learning.pipe`](file:///Users/krishnakasaudhan/rocketride2/dispute_learning.pipe) | `chat` | `llm_gemini` (`gemini-2_5-flash`) | `answers` | Analyzes processor verdict and distills winning heuristics into the knowledge base. |
+| [`chat.pipe`](file:///Users/krishnakasaudhan/rocketride2/chat.pipe) | `chat` | `llm_gemini` (`gemini-2_5-flash`) | `answers` | Interactive Q&A and investigation assistant. |
 
 ---
 
-## 🚀 Quickstart & Verification
+## 📊 Multi-Source Data Aggregation & Telemetry
 
-### 1. Environment Setup
+DisputeRocket structures legal representment into 3 standard exhibits:
+
+- **Exhibit A (Payment Authorization & Gateway Verification)**:
+  Proof of 3D Secure / CVV / AVS matching and cardholder authentication at checkout.
+- **Exhibit B (Proof of Service Delivery / Consumption)**:
+  - *SaaS*: Authenticated login logs, IP audit trail, and hours of platform usage post-purchase.
+  - *E-Commerce*: Carrier proof of delivery with GPS coordinates and signed receipt.
+- **Exhibit C (Policy Acceptance & Terms of Service)**:
+  Timestamped checkout logs showing explicit acceptance of non-refundable terms and cancellation policies.
+
+---
+
+## 🛡️ Mandatory Human-in-the-Loop (HITL) Gate
+
+Quality control and compliance are guaranteed through the Human Review Gate:
+
+- **Operations Queue**: Real-time listing of active disputes scoped to the authenticated reviewer.
+- **SLA Countdown Clock**: Real-time countdown to processor submission deadlines with `<48h` urgency highlights.
+- **Inline Rebuttal Editing**: Reviewers can modify letter text or attach custom notes.
+- **Reviewer Attribution**: Stores reviewer name, timestamp, and audit certification token.
+- **Submission Blocker**: Gateway transmission is hard-gated until `status === 'SUBMITTED'` by an authenticated reviewer.
+
+---
+
+## ⚡ Stripe CLI & Webhook Receiver
+
+DisputeRocket includes a dedicated webhook receiver compatible with the official **Stripe CLI**:
+
 ```bash
-# Create virtual environment
+# 1. Forward Stripe events to DisputeRocket
+stripe listen --forward-to localhost:3001/webhooks/stripe
+
+# 2. Trigger test chargeback events
+stripe trigger charge.dispute.created
+```
+
+- In development mode, Stripe CLI dynamic signing secrets are seamlessly handled.
+- In production, strict HMAC-SHA256 signature verification via `STRIPE_WEBHOOK_SECRET` is enforced.
+- Ingested webhooks are automatically normalized, enriched, scored, and placed into the Operations Queue.
+
+---
+
+## 💼 Commercial Monetization & ROI Model
+
+$$\text{DisputeRocket Fee} = \text{Base Compilation Fee (\$25.00)} + \left(\text{Recovered Capital} \times 15\%\right)$$
+
+### Example Unit Economics ($450 Dispute):
+- **Dispute Amount**: $450.00
+- **Base Fee**: $25.00
+- **Contingency Fee (15%)**: $67.50
+- **Total DisputeRocket Fee**: $92.50
+- **Merchant Net Recovered Capital**: **$357.50** (Merchant achieves a **4.3x ROI**)
+
+---
+
+## 🚀 Quickstart & Execution Guide
+
+### Prerequisites
+- Node.js 20+ / Bun 1.1+
+- Python 3.11+
+- PostgreSQL (Neon Database or local Postgres)
+
+### 1. Launch Node.js Backend & React Operations Dashboard
+```bash
+# 1. Start Backend (Port 3001)
+cd backend
+bun install
+bun run prisma:push
+bun src/index.ts
+
+# 2. Start Frontend (Port 5173)
+cd ../frontend
+npm install
+npm run dev
+```
+- Dashboard: `http://localhost:5173`
+- Backend API: `http://localhost:3001`
+
+### 2. Launch Python RocketRide Pipeline & Web Server
+```bash
+# Set up Python environment
 python3 -m venv .venv
 source .venv/bin/activate
+pip install -r requirements.txt # or pip install rocketride python-dotenv pydantic fastapi uvicorn
 
-# Install RocketRide SDK & dependencies
-pip install rocketride python-dotenv pydantic typing-extensions
-```
-
-### 2. Configure Environment (`.env`)
-The `.env` file is pre-configured with the required variables:
-```env
-ROCKETRIDE_URI=https://api.rocketride.ai
-ROCKETRIDE_APIKEY=your_rocketride_api_key_here
-ROCKETRIDE_GEMINI_KEY=your_gemini_api_key_here
-GEMINI_API_KEY=your_gemini_api_key_here
-
-DISPUTE_RECOVERY_FEE_PERCENT=15.0
-DISPUTE_FLAT_FEE=25.0
-```
-
-### 3. Run Pipeline Health Checks
-Validate all `.pipe` schemas, SDK installations, environment variables, and dry-run execution:
-```bash
-python check.py
-```
-
-### 4. Run the Full End-to-End Demonstration
-Execute the complete multi-scenario demonstration (SaaS dispute + E-commerce dispute + Human review + Outcome learning + Portfolio ROI):
-```bash
+# Run CLI Scenario Walkthrough
 python main.py
+
+# Launch Python Review Server & Swagger Docs (Port 8000)
+uvicorn server:app --port 8000 --reload
+```
+- Web Dashboard: `http://localhost:8000`
+- Interactive Swagger API Docs: `http://localhost:8000/docs`
+
+---
+
+## 🧪 Verification & Test Suites
+
+DisputeRocket includes a 21-point automated End-to-End verification test suite:
+
+```bash
+cd backend
+bun src/e2e-test.ts
 ```
 
+### Test Coverage Highlights:
+- [x] Unauthenticated endpoint protection (401)
+- [x] User registration & bcrypt password hashing
+- [x] JWT cookie session issuance & verification
+- [x] Stripe webhook receiver & signature verification
+- [x] Multi-source telemetry enrichment & deterministic scoring
+- [x] LLM score-gated rebuttal drafting via Gemini 2.5 Flash
+- [x] Human reviewer attribution & approval sign-off
+- [x] Multi-user session and data isolation (0 cross-user log leaks)
+
 ---
 
-## 💼 Commercial Monetization & ROI
+## 📜 License
 
-DisputeRocket turns every dispute into a paid job:
-- **Base Intake / Compilation Fee**: `$25.00` per dispute processed.
-- **Success Contingency**: `15.0%` of recovered funds when a dispute is won.
-- **Merchant Value Metric**: Typical **4.3x ROI** for merchants compared to lost dispute revenue and chargeback penalty fees.
-
----
-
-## 🛡️ Hackathon Compliance Checklist
-
-- [x] Implements the exact problem statement (SaaS + E-Commerce disputes, evidence aggregation, per-customer record, HITL review, deadline submission, outcome learning, revenue model).
-- [x] Configured with Google Gemini API key (`ROCKETRIDE_GEMINI_KEY`).
-- [x] All `.pipe` files follow strict RocketRide rules (GUID project IDs, component ordering, typed lanes).
-- [x] Context manager & `use_existing=True` best practices implemented.
-- [x] `check.py` health test script created and passing all checks.
-- [x] Python 3.13 compatible with zero deprecation warnings.
+MIT License. Developed for the Rocket Ride Hackathon.
