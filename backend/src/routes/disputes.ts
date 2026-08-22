@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma, executeDisputePipeline } from '../lib/pipeline';
 import { mapStripeReasonToCanonical, UnsavedDispute } from '../lib/normalizers/stripe';
+import { manualDisputeRateLimiter } from '../middleware/rateLimit';
 
 export const disputeRouter = Router();
 
@@ -42,7 +43,7 @@ disputeRouter.get('/', async (req: Request, res: Response) => {
  */
 disputeRouter.get('/:id', async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const dispute = await prisma.dispute.findUnique({
       where: { id },
       include: { telemetrySignals: true },
@@ -61,11 +62,13 @@ disputeRouter.get('/:id', async (req: Request, res: Response) => {
 
 /**
  * POST /api/disputes/:id/approve - Human review sign-off and gateway submission
+ * Uses authenticated user identity from req.user for reviewedBy attribution.
  */
 disputeRouter.post('/:id/approve', async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
-    const { reviewerName, notes, rebuttalEdits } = req.body;
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const { notes, rebuttalEdits } = req.body;
+    const reviewer = req.user?.name || req.user?.email || 'Risk Compliance Officer';
 
     const dispute = await prisma.dispute.findUnique({ where: { id } });
     if (!dispute) {
@@ -77,7 +80,7 @@ disputeRouter.post('/:id/approve', async (req: Request, res: Response) => {
       where: { id },
       data: {
         status: 'SUBMITTED',
-        reviewedBy: reviewerName || 'Risk Compliance Officer',
+        reviewedBy: reviewer,
         reviewNotes: notes || 'Verified evidence exhibits and signed off.',
         rebuttalDraft: rebuttalEdits || dispute.rebuttalDraft,
       },
@@ -98,7 +101,7 @@ disputeRouter.post('/:id/approve', async (req: Request, res: Response) => {
  * POST /api/disputes/manual - Manual Override Input Path
  * Converges into the SAME normalization, telemetry enrichment, deterministic scoring, and LLM drafting pipeline.
  */
-disputeRouter.post('/manual', async (req: Request, res: Response) => {
+disputeRouter.post('/manual', manualDisputeRateLimiter, async (req: Request, res: Response) => {
   try {
     const {
       disputeId,

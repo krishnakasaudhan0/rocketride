@@ -1,16 +1,42 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
 import { webhookRouter } from './routes/webhooks';
 import { analyticsRouter } from './routes/analytics';
 import { disputeRouter } from './routes/disputes';
+import { authRouter } from './routes/auth';
+import { requireAuth } from './middleware/auth';
 
 dotenv.config();
+
+// Fail startup loudly if JWT_SECRET is unset in production
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET environment variable must be set in production.');
+  process.exit(1);
+}
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+// Configure CORS with allowed origins and credentials
+const rawAllowedOrigins =
+  process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173';
+const allowedOrigins = rawAllowedOrigins.split(',').map((origin) => origin.trim()).filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps, curl, server-to-server) or matching allowed origins
+      if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS Error: Origin ${origin} is not allowed by allowlist.`));
+      }
+    },
+    credentials: true,
+  })
+);
 
 // Raw body parser for Stripe Webhook Signature Verification
 app.use(
@@ -18,15 +44,19 @@ app.use(
   express.raw({ type: 'application/json' })
 );
 
-// Standard JSON parser for all other routes
+// Standard JSON and Cookie parsers for all other routes
 app.use(express.json());
+app.use(cookieParser());
 
-// Mount Route Handlers
+// Public Route Handlers
+app.use('/auth', authRouter);
 app.use('/webhooks', webhookRouter);
-app.use('/internal', analyticsRouter);
-app.use('/api/disputes', disputeRouter);
 
-app.get('/health', (req, res) => {
+// Protected Route Handlers (Require valid JWT Cookie)
+app.use('/internal', requireAuth, analyticsRouter);
+app.use('/api/disputes', requireAuth, disputeRouter);
+
+app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     service: 'DisputeRocket Ingestion Engine',
@@ -34,9 +64,10 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`\n🚀 DisputeRocket Backend running on http://localhost:${PORT}`);
-  console.log(`   • Stripe Webhook Receiver: POST http://localhost:${PORT}/webhooks/stripe`);
-  console.log(`   • Telemetry Enrichment API: GET http://localhost:${PORT}/internal/analytics/:email`);
-  console.log(`   • Operations Dashboard API: GET http://localhost:${PORT}/api/disputes\n`);
+const portNumber = Number(PORT) || 3001;
+app.listen(portNumber, '0.0.0.0', () => {
+  console.log(`\n🚀 DisputeRocket Backend running on http://0.0.0.0:${portNumber}`);
+  console.log(`   • Auth Endpoints: POST /auth/register, /auth/login`);
+  console.log(`   • Stripe Webhook Receiver: POST /webhooks/stripe`);
+  console.log(`   • Operations Dashboard API: GET /api/disputes\n`);
 });

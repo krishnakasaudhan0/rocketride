@@ -9,7 +9,8 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_mock', {
   apiVersion: '2025-01-27.acacia' as any,
 });
 
-const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || 'whsec_test_mock_webhook_secret';
+const DEFAULT_PLACEHOLDER_SECRET = 'whsec_test_mock_webhook_secret';
+const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
 /**
  * Real Stripe Webhook Receiver
@@ -19,34 +20,68 @@ webhookRouter.post('/stripe', async (req: Request, res: Response): Promise<void>
   const sig = req.headers['stripe-signature'] as string | undefined;
   const rawBody = req.body; // Buffer from express.raw()
 
+  const isDevBypassAllowed =
+    process.env.NODE_ENV === 'development' &&
+    process.env.ALLOW_UNSIGNED_WEBHOOKS === 'true';
+
   let event: Stripe.Event;
 
-  // 1. Signature Verification
-  try {
-    if (sig && webhookSecret && !webhookSecret.includes('mock')) {
-      event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
+  const isSecretConfigured = Boolean(webhookSecret && webhookSecret !== DEFAULT_PLACEHOLDER_SECRET);
+
+  // 1. Signature Verification Boundary
+  if (!isSecretConfigured || !sig) {
+    if (isDevBypassAllowed) {
+      console.warn(
+        '[Stripe Webhook] WARNING: Bypassing signature verification (NODE_ENV=development and ALLOW_UNSIGNED_WEBHOOKS=true). Do not use in production!'
+      );
+      try {
+        const payloadStr = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : JSON.stringify(rawBody || {});
+        event = JSON.parse(payloadStr);
+      } catch (parseErr: any) {
+        res.status(400).json({ error: `Webhook Error: Failed to parse payload (${parseErr.message})` });
+        return;
+      }
     } else {
-      // In local dev/test mode without live Stripe CLI signing secret, parse safely
-      const payloadStr = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : JSON.stringify(rawBody);
-      event = JSON.parse(payloadStr);
+      console.error('[Stripe Webhook] Rejected: Missing stripe-signature header or unconfigured STRIPE_WEBHOOK_SECRET.');
+      res.status(400).json({
+        error: 'Webhook Error: Missing stripe-signature header or STRIPE_WEBHOOK_SECRET is unset/default.',
+      });
+      return;
     }
-  } catch (err: any) {
-    console.error('[Stripe Webhook] Signature verification failed:', err.message);
+  } else {
+    try {
+      event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret!);
+    } catch (err: any) {
+      if (isDevBypassAllowed) {
+        console.warn(
+          `[Stripe Webhook] WARNING: constructEvent failed (${err.message}), but bypassing due to ALLOW_UNSIGNED_WEBHOOKS=true in development.`
+        );
+        try {
+          const payloadStr = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : JSON.stringify(rawBody || {});
+          event = JSON.parse(payloadStr);
+        } catch (parseErr: any) {
+          res.status(400).json({ error: `Webhook Error: ${parseErr.message}` });
+          return;
+        }
+      } else {
+        console.error('[Stripe Webhook] Signature verification failed:', err.message);
 
-    // Save failed raw webhook event
-    await prisma.rawWebhookEvent.create({
-      data: {
-        processor: 'stripe',
-        externalEventId: `failed_sig_${Date.now()}_${Math.random()}`,
-        eventType: 'unknown',
-        payload: Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : JSON.stringify(rawBody || {}),
-        signatureValid: false,
-        processed: false,
-      },
-    }).catch(() => null);
+        // Save failed raw webhook event
+        await prisma.rawWebhookEvent.create({
+          data: {
+            processor: 'stripe',
+            externalEventId: `failed_sig_${Date.now()}_${Math.random()}`,
+            eventType: 'unknown',
+            payload: Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : JSON.stringify(rawBody || {}),
+            signatureValid: false,
+            processed: false,
+          },
+        }).catch(() => null);
 
-    res.status(400).json({ error: `Webhook Error: ${err.message}` });
-    return;
+        res.status(400).json({ error: `Webhook Error: Signature verification failed (${err.message})` });
+        return;
+      }
+    }
   }
 
   const externalEventId = event.id || `evt_${Date.now()}`;

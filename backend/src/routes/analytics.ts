@@ -8,7 +8,9 @@ export const analyticsRouter = Router();
  * Simulates merchant CRM / product analytics telemetry ingestion (Gorgias, Segment, PostHog, Mixpanel).
  */
 analyticsRouter.get('/analytics/:customerEmail', (req: Request, res: Response): void => {
-  const { customerEmail } = req.params;
+  const customerEmail = Array.isArray(req.params.customerEmail)
+    ? req.params.customerEmail[0]
+    : req.params.customerEmail;
   const telemetry = fetchMockTelemetry(customerEmail);
   res.json({
     customerEmail,

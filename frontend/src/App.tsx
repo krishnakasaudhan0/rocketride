@@ -55,15 +55,30 @@ interface DisputeItem {
   telemetrySignals?: TelemetrySignal[];
 }
 
-const API_BASE = 'http://localhost:3001';
+interface User {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+}
+
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3001';
 
 export function App() {
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authChecking, setAuthChecking] = useState<boolean>(true);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authEmail, setAuthEmail] = useState<string>('');
+  const [authPassword, setAuthPassword] = useState<string>('');
+  const [authName, setAuthName] = useState<string>('');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(false);
+
   const [disputes, setDisputes] = useState<DisputeItem[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [selectedDispute, setSelectedDispute] = useState<DisputeItem | null>(null);
   const [isManualModalOpen, setIsManualModalOpen] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
-  const [reviewerName, setReviewerName] = useState<string>('Sarah Chen (Risk Lead)');
   const [submittingReview, setSubmittingReview] = useState<boolean>(false);
 
   // Manual Form State
@@ -83,11 +98,32 @@ export function App() {
     cvvMatch: true,
   });
 
+  // Check auth session
+  const checkAuth = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/me`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setCurrentUser(data.user);
+      } else {
+        setCurrentUser(null);
+      }
+    } catch {
+      setCurrentUser(null);
+    } finally {
+      setAuthChecking(false);
+    }
+  };
+
+  useEffect(() => {
+    checkAuth();
+  }, []);
+
   // Fetch disputes from backend
   const fetchDisputes = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/disputes`);
+      const res = await fetch(`${API_BASE}/api/disputes`, { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         setDisputes(data);
@@ -97,7 +133,7 @@ export function App() {
         }
       }
     } catch {
-      // Offline / standalone fallback seed for initial render
+      // Offline fallback seed for standalone preview if backend unreachable
       if (disputes.length === 0) {
         setDisputes([
           {
@@ -142,10 +178,57 @@ export function App() {
   };
 
   useEffect(() => {
+    if (!currentUser) return;
     fetchDisputes();
     const interval = setInterval(fetchDisputes, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [currentUser]);
+
+  // Handle Login & Register submission
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      const endpoint = authMode === 'register' ? '/auth/register' : '/auth/login';
+      const body =
+        authMode === 'register'
+          ? { email: authEmail, password: authPassword, name: authName }
+          : { email: authEmail, password: authPassword };
+
+      const res = await fetch(`${API_BASE}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(body),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setAuthError(data.error || 'Authentication failed. Please check your credentials.');
+        return;
+      }
+
+      setCurrentUser(data.user);
+      setAuthEmail('');
+      setAuthPassword('');
+      setAuthName('');
+    } catch (err: any) {
+      setAuthError(err.message || 'Connection error with backend server.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch(`${API_BASE}/auth/logout`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+    } catch {}
+    setCurrentUser(null);
+  };
 
   // Trigger Real Stripe Webhook
   const triggerStripeWebhook = async (type: 'high_saas' | 'high_ecom' | 'low_evidence') => {
@@ -225,6 +308,7 @@ export function App() {
       await fetch(`${API_BASE}/webhooks/stripe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
       setTimeout(fetchDisputes, 1000);
@@ -240,6 +324,7 @@ export function App() {
       const res = await fetch(`${API_BASE}/api/disputes/manual`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(manualForm),
       });
       if (res.ok) {
@@ -258,8 +343,8 @@ export function App() {
       const res = await fetch(`${API_BASE}/api/disputes/${id}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
-          reviewerName,
           notes: 'Verified AVS/CVV matching, 2FA logs, and user telemetry. Approved.',
         }),
       });
@@ -283,6 +368,123 @@ export function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // Session Check Loader
+  if (authChecking) {
+    return (
+      <div className="min-h-screen bg-black text-neutral-400 flex flex-col items-center justify-center font-mono text-xs gap-3">
+        <RefreshCw className="h-6 w-6 animate-spin text-indigo-400" />
+        <span>Verifying DisputeRocket session...</span>
+      </div>
+    );
+  }
+
+  // Functional Login / Register Screen if unauthenticated
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-black text-neutral-100 flex flex-col items-center justify-center p-4 font-sans selection:bg-neutral-800">
+        <div className="max-w-md w-full bg-neutral-950 border border-neutral-800 rounded-2xl p-8 shadow-2xl space-y-6">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-neutral-900 border border-neutral-700 flex items-center justify-center">
+              <ShieldAlert className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-base font-bold tracking-tight text-white">DisputeRocket</h1>
+              <p className="text-xs text-neutral-400 font-mono">Autonomous Dispute Defense Platform</p>
+            </div>
+          </div>
+
+          <div className="flex border-b border-neutral-800 pb-1">
+            <button
+              onClick={() => {
+                setAuthMode('login');
+                setAuthError(null);
+              }}
+              className={`flex-1 py-2 text-xs font-semibold text-center border-b-2 transition cursor-pointer ${
+                authMode === 'login'
+                  ? 'border-indigo-500 text-white'
+                  : 'border-transparent text-neutral-500 hover:text-neutral-300'
+              }`}
+            >
+              Sign In
+            </button>
+            <button
+              onClick={() => {
+                setAuthMode('register');
+                setAuthError(null);
+              }}
+              className={`flex-1 py-2 text-xs font-semibold text-center border-b-2 transition cursor-pointer ${
+                authMode === 'register'
+                  ? 'border-indigo-500 text-white'
+                  : 'border-transparent text-neutral-500 hover:text-neutral-300'
+              }`}
+            >
+              Create Account
+            </button>
+          </div>
+
+          {authError && (
+            <div className="p-3 rounded-lg bg-red-950/50 border border-red-800/80 text-red-300 text-xs font-mono">
+              {authError}
+            </div>
+          )}
+
+          <form onSubmit={handleAuthSubmit} className="space-y-4">
+            {authMode === 'register' && (
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">Full Name</label>
+                <input
+                  type="text"
+                  required
+                  value={authName}
+                  onChange={(e) => setAuthName(e.target.value)}
+                  placeholder="e.g. Sarah Chen"
+                  className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-xs text-white placeholder:text-neutral-600 focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-semibold text-neutral-300 mb-1">Email Address</label>
+              <input
+                type="email"
+                required
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                placeholder="name@company.com"
+                className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-xs text-white placeholder:text-neutral-600 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-neutral-300 mb-1">Password</label>
+              <input
+                type="password"
+                required
+                minLength={6}
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                placeholder="••••••••"
+                className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-xs text-white placeholder:text-neutral-600 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={authLoading}
+              className="w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold transition shadow-md shadow-indigo-600/30 cursor-pointer"
+            >
+              {authLoading
+                ? 'Authenticating...'
+                : authMode === 'register'
+                ? 'Create Reviewer Account'
+                : 'Sign In to Dashboard'}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-black text-neutral-100 font-sans antialiased selection:bg-neutral-800 selection:text-white flex flex-col">
       {/* Minimal Header */}
@@ -293,13 +495,26 @@ export function App() {
               <ShieldAlert className="h-4 w-4 text-white" />
             </div>
             <span className="font-bold text-sm tracking-tight text-white">DisputeRocket</span>
-            <span className="text-[11px] text-neutral-500 font-mono">/ Ingestion & Operations</span>
+            <span className="text-[11px] text-neutral-500 font-mono">/ Operations</span>
           </div>
 
           <div className="flex items-center gap-3">
             <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-neutral-400 font-mono">
               <Radio className="h-3 w-3 text-emerald-400 animate-pulse" />
-              <span>Stripe Webhook Receiver Active</span>
+              <span>Receiver Active</span>
+            </div>
+
+            {/* Signed-in user & Logout */}
+            <div className="flex items-center gap-2 pl-2 border-l border-neutral-800 text-xs">
+              <span className="hidden md:inline text-neutral-400 font-mono text-[11px]">
+                Signed in as <strong className="text-neutral-200">{currentUser.name || currentUser.email}</strong>
+              </span>
+              <button
+                onClick={handleLogout}
+                className="text-[11px] font-mono text-neutral-400 hover:text-white px-2 py-1 rounded bg-neutral-900 border border-neutral-800 hover:border-neutral-700 transition cursor-pointer"
+              >
+                Logout
+              </button>
             </div>
 
             <button
@@ -616,18 +831,14 @@ export function App() {
                     Human Reviewer Sign-Off Gate
                   </span>
                   <p className="text-[11px] text-neutral-400">
-                    A human checks and signs off before transmitting to {selectedDispute.processor} API.
+                    Reviewer certification before transmitting representment package to {selectedDispute.processor} API.
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2 w-full sm:w-auto">
-                  <input
-                    type="text"
-                    value={reviewerName}
-                    onChange={(e) => setReviewerName(e.target.value)}
-                    className="bg-black border border-neutral-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-neutral-500 w-full sm:w-48"
-                    placeholder="Reviewer Name"
-                  />
+                <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+                  <span className="text-neutral-300 text-xs">
+                    Signing as: <strong className="text-white">{currentUser?.name || currentUser?.email}</strong>
+                  </span>
                   <button
                     onClick={() => handleApproveDispute(selectedDispute.id)}
                     disabled={submittingReview}
