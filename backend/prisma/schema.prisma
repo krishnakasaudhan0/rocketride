@@ -1,0 +1,55 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model RawWebhookEvent {
+  id              String   @id @default(cuid())
+  processor       String   // "stripe" | "manual"
+  externalEventId String   @unique
+  eventType       String
+  payload         String   // Raw JSON string
+  signatureValid  Boolean
+  receivedAt      DateTime @default(now())
+  processed       Boolean  @default(false)
+}
+
+model Dispute {
+  id                String            @id @default(cuid())
+  processor         String
+  externalDisputeId String            @unique
+  chargeId          String
+  amountCents       Int
+  currency          String
+  reasonRaw         String
+  reasonCanonical   String            // FRAUD | PRODUCT_NOT_RECEIVED | PRODUCT_NOT_AS_DESCRIBED | DUPLICATE_BILLING | SUBSCRIPTION_CANCELLED | OTHER
+  customerName      String?
+  customerEmail     String?
+  cardLast4         String?
+  businessType      String?
+  status            String            @default("INGESTED") // INGESTED -> ENRICHED -> SCORED -> DRAFTED -> SUBMITTED | NEEDS_REVIEW
+  evidenceDueBy     DateTime
+  evidenceScore     Int?              // 0-100, computed in Stage 5
+  rebuttalDraft     String?
+  reviewNotes       String?
+  reviewedBy        String?
+  createdAt         DateTime          @default(now())
+  telemetrySignals  TelemetrySignal[]
+}
+
+model TelemetrySignal {
+  id            String   @id @default(cuid())
+  disputeId     String
+  dispute       Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  source        String   // "mock_analytics_db"
+  usageHours    Float?
+  twoFactorUsed Boolean?
+  avsMatch      Boolean?
+  cvvMatch      Boolean?
+  sessionCount  Int?
+  fetchedAt     DateTime @default(now())
+}

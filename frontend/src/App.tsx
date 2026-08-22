@@ -1,860 +1,777 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   ShieldAlert,
   Sparkles,
-  ArrowRight,
   CheckCircle2,
   Clock,
   UserCheck,
-  RotateCcw,
   Copy,
   Check,
   Scale,
-  DollarSign,
-  Cpu,
+  Plus,
+  RefreshCw,
+  X,
+  Radio,
+  FileCode,
+  Laptop,
+  CheckCircle,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
-interface DisputeInput {
-  disputeId: string;
-  customerName: string;
-  customerEmail: string;
-  amount: number;
-  currency: string;
-  processor: 'Stripe' | 'Shopify' | 'PayPal' | 'Adyen';
-  reasonCode: string;
-  orderItem: string;
-  cardLast4: string;
+interface TelemetrySignal {
+  id: string;
+  source: string;
+  usageHours: number;
+  twoFactorUsed: boolean;
   avsMatch: boolean;
   cvvMatch: boolean;
-  businessType: 'SaaS' | 'E-Commerce';
-  // SaaS signals
-  activeHours?: number;
-  twoFactorVerified?: boolean;
-  // Physical signals
-  carrier?: string;
-  trackingNumber?: string;
-  recipientSignature?: string;
+  sessionCount: number;
+  fetchedAt: string;
 }
 
-interface EvidenceResult {
-  winProbability: number;
-  strategy: string;
-  exhibits: { title: string; category: string; summary: string }[];
-  rebuttalLetter: string;
-  submissionToken?: string;
+interface DisputeItem {
+  id: string;
+  processor: string;
+  externalDisputeId: string;
+  chargeId: string;
+  amountCents: number;
+  currency: string;
+  reasonRaw: string;
+  reasonCanonical: string;
+  customerName?: string;
+  customerEmail?: string;
+  cardLast4?: string;
+  businessType?: string;
+  status: 'INGESTED' | 'ENRICHED' | 'SCORED' | 'DRAFTED' | 'NEEDS_REVIEW' | 'SUBMITTED';
+  evidenceDueBy: string;
+  evidenceScore?: number;
+  rebuttalDraft?: string;
+  reviewNotes?: string;
+  reviewedBy?: string;
+  createdAt: string;
+  amountFormatted?: string;
+  hoursRemaining?: number;
+  isUrgent?: boolean;
+  telemetrySignals?: TelemetrySignal[];
 }
+
+const API_BASE = 'http://localhost:3001';
 
 export function App() {
-  // Initial clean form state
-  const [form, setForm] = useState<DisputeInput>({
-    disputeId: 'dp_' + Math.floor(100000 + Math.random() * 900000),
-    customerName: '',
-    customerEmail: '',
+  const [disputes, setDisputes] = useState<DisputeItem[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [selectedDispute, setSelectedDispute] = useState<DisputeItem | null>(null);
+  const [isManualModalOpen, setIsManualModalOpen] = useState<boolean>(false);
+  const [copied, setCopied] = useState<boolean>(false);
+  const [reviewerName, setReviewerName] = useState<string>('Sarah Chen (Risk Lead)');
+  const [submittingReview, setSubmittingReview] = useState<boolean>(false);
+
+  // Manual Form State
+  const [manualForm, setManualForm] = useState({
+    disputeId: '',
+    customerName: 'Alexander Vance',
+    customerEmail: 'alex.vance@company.io',
     amount: 450.0,
     currency: 'USD',
     processor: 'Stripe',
-    reasonCode: '10.4 Fraud - Card Absent',
-    orderItem: 'Pro Annual Subscription',
-    cardLast4: '4242',
-    avsMatch: true,
-    cvvMatch: true,
+    reasonCode: '10.4_FRAUD_CARD_ABSENT',
+    cardLast4: '8819',
     businessType: 'SaaS',
     activeHours: 38.5,
     twoFactorVerified: true,
-    carrier: 'FedEx Priority',
-    trackingNumber: '781290481290',
-    recipientSignature: '',
+    avsMatch: true,
+    cvvMatch: true,
   });
 
-  // Pipeline Stages:
-  // 0: Form Intake
-  // 1: Multi-Source Correlation
-  // 2: RocketRide Pipeline (Gemini 2.5 Flash)
-  // 3: Mandatory Human Review Gate
-  // 4: Submitted to Gateway
-  // 5: Outcome Won & Learning Loop
-  const [stage, setStage] = useState<number>(0);
-  const [evidence, setEvidence] = useState<EvidenceResult | null>(null);
-  const [editableLetter, setEditableLetter] = useState<string>('');
-  const [reviewerName, setReviewerName] = useState<string>('');
-  const [copied, setCopied] = useState<boolean>(false);
-
-  // Quick fill demo helper
-  const handleQuickFill = (type: 'SaaS' | 'E-Commerce') => {
-    if (type === 'SaaS') {
-      setForm({
-        disputeId: 'dp_saas_' + Math.floor(1000 + Math.random() * 9000),
-        customerName: 'Alexander Vance',
-        customerEmail: 'alex.vance@company.io',
-        amount: 450.0,
-        currency: 'USD',
-        processor: 'Stripe',
-        reasonCode: '10.4 Fraud - Card Absent',
-        orderItem: 'Cloud Pro Annual Subscription',
-        cardLast4: '8819',
-        avsMatch: true,
-        cvvMatch: true,
-        businessType: 'SaaS',
-        activeHours: 38.5,
-        twoFactorVerified: true,
-      });
-    } else {
-      setForm({
-        disputeId: 'dp_ecom_' + Math.floor(1000 + Math.random() * 9000),
-        customerName: 'Sarah Chen',
-        customerEmail: 'sarah.chen@audio.com',
-        amount: 899.0,
-        currency: 'USD',
-        processor: 'Shopify',
-        reasonCode: '13.1 Merchandise Not Received',
-        orderItem: 'Studio Reference Headphones',
-        cardLast4: '1092',
-        avsMatch: true,
-        cvvMatch: true,
-        businessType: 'E-Commerce',
-        carrier: 'FedEx Priority Overnight',
-        trackingNumber: '781290481290',
-        recipientSignature: 'S. CHEN',
-      });
+  // Fetch disputes from backend
+  const fetchDisputes = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/disputes`);
+      if (res.ok) {
+        const data = await res.json();
+        setDisputes(data);
+        if (selectedDispute) {
+          const updated = data.find((d: DisputeItem) => d.id === selectedDispute.id);
+          if (updated) setSelectedDispute(updated);
+        }
+      }
+    } catch {
+      // Offline / standalone fallback seed for initial render
+      if (disputes.length === 0) {
+        setDisputes([
+          {
+            id: 'demo_1',
+            processor: 'stripe',
+            externalDisputeId: 'dp_stripe_live_7719',
+            chargeId: 'ch_live_881902',
+            amountCents: 45000,
+            currency: 'USD',
+            reasonRaw: 'fraudulent',
+            reasonCanonical: 'FRAUD',
+            customerName: 'Alexander Vance',
+            customerEmail: 'alex.vance@vancemedia.io',
+            cardLast4: '8819',
+            businessType: 'SaaS',
+            status: 'DRAFTED',
+            evidenceDueBy: new Date(Date.now() + 6 * 86400 * 1000).toISOString(),
+            evidenceScore: 100,
+            rebuttalDraft: `REPRESENTMENT REBUTTAL STATEMENT\nTo: STRIPE Dispute Resolution & Card Issuing Bank\nDispute Reference: dp_stripe_live_7719 | Amount: $450.00 USD\nReason: fraudulent (FRAUD) | Cardholder: Alexander Vance\n\nWe provide conclusive evidence refuting the claim of unauthorized transaction. The purchase was authenticated with full AVS & CVV match on Visa *8819. Server telemetry records 38.5 active usage hours across 14 authenticated sessions with 2-Factor Authentication verified on the cardholder's primary device.\n\nWe respectfully request immediate reversal of this dispute.`,
+            createdAt: new Date().toISOString(),
+            amountFormatted: '$450.00 USD',
+            hoursRemaining: 138,
+            isUrgent: false,
+            telemetrySignals: [
+              {
+                id: 'sig_1',
+                source: 'mock_analytics_db',
+                usageHours: 38.5,
+                twoFactorUsed: true,
+                avsMatch: true,
+                cvvMatch: true,
+                sessionCount: 14,
+                fetchedAt: new Date().toISOString(),
+              },
+            ],
+          },
+        ]);
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Run RocketRide Pipeline
-  const handleRunPipeline = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.customerName || !form.customerEmail || !form.amount) return;
+  useEffect(() => {
+    fetchDisputes();
+    const interval = setInterval(fetchDisputes, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
-    setStage(1); // Ingesting
-
-    setTimeout(() => {
-      setStage(2); // Gemini Processing
-
-      setTimeout(() => {
-        // Compile Evidence Package dynamically based on user input
-        const isSaaS = form.businessType === 'SaaS';
-        const winProb = (form.avsMatch && form.cvvMatch) ? 0.96 : 0.85;
-
-        const exhibits = [
-          {
-            title: 'Exhibit A: Payment Authorization & AVS/CVV Security',
-            category: 'PAYMENT_PROOF',
-            summary: `Verified transaction metadata showing AVS ${form.avsMatch ? 'FULL MATCH' : 'NO MATCH'} and CVV ${form.cvvMatch ? 'PASS' : 'FAIL'} on card ending in ${form.cardLast4}.`,
+  // Trigger Real Stripe Webhook
+  const triggerStripeWebhook = async (type: 'high_saas' | 'high_ecom' | 'low_evidence') => {
+    let payload;
+    if (type === 'high_saas') {
+      const rand = Math.floor(1000 + Math.random() * 9000);
+      payload = {
+        id: `evt_stripe_webhook_${rand}`,
+        type: 'charge.dispute.created',
+        data: {
+          object: {
+            id: `dp_stripe_${rand}`,
+            amount: 45000,
+            currency: 'usd',
+            reason: 'fraudulent',
+            charge: `ch_saas_${rand}`,
+            created: Math.floor(Date.now() / 1000),
+            evidence_details: { due_by: Math.floor(Date.now() / 1000) + 7 * 86400 },
+            evidence: {
+              billing_address: { name: 'Alexander Vance' },
+              customer_email_address: 'alex.vance@vancemedia.io',
+            },
+            payment_method_details: { card: { last4: '8819' } },
+            metadata: { business_type: 'SaaS' },
           },
-          {
-            title: isSaaS
-              ? 'Exhibit B: User Session Telemetry & 2FA Audit'
-              : 'Exhibit B: Carrier Proof of Delivery & Signature',
-            category: isSaaS ? 'USAGE_TELEMETRY' : 'PROOF_OF_DELIVERY',
-            summary: isSaaS
-              ? `Server telemetry audit logging ${form.activeHours || 24} hours of authenticated dashboard usage with ${form.twoFactorVerified ? '2FA verification' : 'standard login'}.`
-              : `Carrier tracking (${form.carrier || 'Carrier'} #${form.trackingNumber || 'N/A'}) confirmed delivered with signature '${form.recipientSignature || form.customerName.toUpperCase()}'.`,
+        },
+      };
+    } else if (type === 'high_ecom') {
+      const rand = Math.floor(1000 + Math.random() * 9000);
+      payload = {
+        id: `evt_stripe_webhook_${rand}`,
+        type: 'charge.dispute.created',
+        data: {
+          object: {
+            id: `dp_stripe_${rand}`,
+            amount: 89900,
+            currency: 'usd',
+            reason: 'product_not_received',
+            charge: `ch_ecom_${rand}`,
+            created: Math.floor(Date.now() / 1000),
+            evidence_details: { due_by: Math.floor(Date.now() / 1000) + 5 * 86400 },
+            evidence: {
+              billing_address: { name: 'Sarah Chen' },
+              customer_email_address: 'sarah.chen@studioaudio.com',
+            },
+            payment_method_details: { card: { last4: '1092' } },
+            metadata: { business_type: 'E-Commerce' },
           },
-          {
-            title: 'Exhibit C: Terms of Service & Cancellation Policy',
-            category: 'TERMS_ACCEPTANCE',
-            summary: `Timestamped checkout record proving customer affirmatively accepted merchant terms and cancellation policies for ${form.orderItem}.`,
+        },
+      };
+    } else {
+      const rand = Math.floor(1000 + Math.random() * 9000);
+      payload = {
+        id: `evt_stripe_webhook_${rand}`,
+        type: 'charge.dispute.created',
+        data: {
+          object: {
+            id: `dp_stripe_${rand}`,
+            amount: 120000,
+            currency: 'usd',
+            reason: 'fraudulent',
+            charge: `ch_fraud_${rand}`,
+            created: Math.floor(Date.now() / 1000),
+            evidence_details: { due_by: Math.floor(Date.now() / 1000) + 3 * 86400 },
+            evidence: {
+              billing_address: { name: 'Suspicious Buyer' },
+              customer_email_address: 'fraud_account@disposable.com',
+            },
+            payment_method_details: { card: { last4: '0000' } },
+            metadata: { business_type: 'SaaS' },
           },
-        ];
+        },
+      };
+    }
 
-        const letter = `REPRESENTMENT REBUTTAL STATEMENT
-To: ${form.processor} Dispute Resolution & Card Issuing Bank
-Dispute ID: ${form.disputeId} | Disputed Amount: $${form.amount.toFixed(2)} ${form.currency}
-Reason Code: ${form.reasonCode}
-Cardholder: ${form.customerName} (${form.customerEmail}) | Card: *${form.cardLast4}
-
-Dear Chargeback Resolution Specialist,
-
-We provide formal contestation and evidence proving the cardholder authorized the transaction for "${form.orderItem}", received full commercial benefit, and consented to merchant terms.
-
-I. TRANSACTION AUTHENTICATION & FRAUD REFUTATION
-- Address Verification Service (AVS): ${form.avsMatch ? 'PASS / FULL MATCH' : 'UNAVAILABLE'}
-- Card Verification Value (CVV2): ${form.cvvMatch ? 'PASS / MATCHED' : 'UNAVAILABLE'}
-- Cardholder Name: ${form.customerName}
-
-II. PROOF OF FULFILLMENT & UTILIZATION
-${
-  isSaaS
-    ? `The cardholder actively utilized the SaaS platform for ${form.activeHours || 24} hours across multiple authenticated sessions ${form.twoFactorVerified ? 'with 2-Factor Authentication' : ''}. Persistent authenticated access refutes the claim of unauthorized transaction.`
-    : `The merchandise was dispatched via ${form.carrier || 'Carrier'} (Tracking #${form.trackingNumber || 'N/A'}) and confirmed delivered to the cardholder billing address with signature confirmation '${form.recipientSignature || form.customerName.toUpperCase()}'.`
-}
-
-III. REQUEST FOR REVERSAL
-In accordance with payment network core chargeback rules, we respectfully request immediate reversal of this dispute and release of the contested $${form.amount.toFixed(2)} ${form.currency} to the merchant account.
-
-Respectfully submitted,
-Dispute Defense Operations, DisputeRocket Automated Settlement Unit`;
-
-        setEvidence({
-          winProbability: winProb,
-          strategy: isSaaS
-            ? 'Multi-Factor Telemetry & Persistent Platform Utilization Compendium'
-            : 'Indisputable Carrier Delivery Confirmation with Signature',
-          exhibits,
-          rebuttalLetter: letter,
-        });
-
-        setEditableLetter(letter);
-        setStage(3); // Ready for Human Review
-      }, 1400);
-    }, 1000);
-  };
-
-  // Human Review Approval & Submission
-  const handleApprove = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!reviewerName.trim()) return;
-
-    setStage(4); // Submitting
-
-    setTimeout(() => {
-      setStage(5); // Won
-      confetti({
-        particleCount: 70,
-        spread: 60,
-        origin: { y: 0.6 },
-        colors: ['#6366f1', '#10b981', '#ffffff'],
+    try {
+      await fetch(`${API_BASE}/webhooks/stripe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       });
-    }, 1200);
+      setTimeout(fetchDisputes, 1000);
+    } catch {
+      alert('Backend server running on http://localhost:3001 is required for live webhook ingestion.');
+    }
   };
 
-  // Reset
-  const handleReset = () => {
-    setStage(0);
-    setEvidence(null);
-    setReviewerName('');
+  // Submit Manual Dispute
+  const handleManualSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${API_BASE}/api/disputes/manual`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(manualForm),
+      });
+      if (res.ok) {
+        setIsManualModalOpen(false);
+        fetchDisputes();
+      }
+    } catch {
+      alert('Backend server error. Make sure Bun backend is running on port 3001.');
+    }
   };
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(editableLetter);
+  // Human Sign-Off
+  const handleApproveDispute = async (id: string) => {
+    setSubmittingReview(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/disputes/${id}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reviewerName,
+          notes: 'Verified AVS/CVV matching, 2FA logs, and user telemetry. Approved.',
+        }),
+      });
+      if (res.ok) {
+        confetti({
+          particleCount: 60,
+          spread: 60,
+          origin: { y: 0.6 },
+          colors: ['#6366f1', '#10b981', '#ffffff'],
+        });
+        fetchDisputes();
+      }
+    } finally {
+      setSubmittingReview(false);
+    }
+  };
+
+  const handleCopy = (text: string) => {
+    navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Commercial Revenue
-  const flatFee = 25.0;
-  const contingencyFee = form.amount * 0.15;
-  const totalRevenue = flatFee + contingencyFee;
-  const netSaved = form.amount - totalRevenue;
-
   return (
     <div className="min-h-screen bg-black text-neutral-100 font-sans antialiased selection:bg-neutral-800 selection:text-white flex flex-col">
       {/* Minimal Header */}
-      <header className="border-b border-neutral-800/80 bg-black/80 backdrop-blur-md sticky top-0 z-40">
-        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
+      <header className="border-b border-neutral-800 bg-black/90 backdrop-blur-md sticky top-0 z-40">
+        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="h-7 w-7 rounded-lg bg-neutral-900 border border-neutral-700 flex items-center justify-center">
               <ShieldAlert className="h-4 w-4 text-white" />
             </div>
             <span className="font-bold text-sm tracking-tight text-white">DisputeRocket</span>
-            <span className="text-[11px] text-neutral-500 font-mono">/ Core Pipeline</span>
+            <span className="text-[11px] text-neutral-500 font-mono">/ Ingestion & Operations</span>
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5 text-[11px] text-neutral-400 font-mono">
-              <Cpu className="h-3.5 w-3.5 text-neutral-500" />
-              <span>RocketRide AI</span>
-              <span className="text-neutral-600">•</span>
-              <span className="text-indigo-400">Gemini 2.5 Flash</span>
+            <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-neutral-400 font-mono">
+              <Radio className="h-3 w-3 text-emerald-400 animate-pulse" />
+              <span>Stripe Webhook Receiver Active</span>
             </div>
 
-            {stage > 0 && (
-              <button
-                onClick={handleReset}
-                className="flex items-center gap-1 text-[11px] font-medium text-neutral-400 hover:text-white px-2.5 py-1 rounded bg-neutral-900 border border-neutral-800 hover:border-neutral-700 transition cursor-pointer"
-              >
-                <RotateCcw className="h-3 w-3" />
-                <span>New Dispute</span>
-              </button>
-            )}
+            <button
+              onClick={() => setIsManualModalOpen(true)}
+              className="flex items-center gap-1 text-[11px] font-semibold text-white px-2.5 py-1.5 rounded-lg bg-neutral-900 border border-neutral-700 hover:border-neutral-500 transition cursor-pointer"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>Manual Override</span>
+            </button>
+
+            <button
+              onClick={fetchDisputes}
+              className="p-1.5 rounded-lg bg-neutral-900 border border-neutral-800 hover:border-neutral-700 text-neutral-400 hover:text-white transition cursor-pointer"
+              title="Refresh Queue"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+            </button>
           </div>
         </div>
       </header>
 
-      {/* Main Container */}
-      <main className="max-w-5xl mx-auto px-4 py-8 flex-1 w-full space-y-6">
-        {/* Pipeline Execution Stepper (Shows when running) */}
-        {stage > 0 && (
-          <div className="bg-neutral-950 border border-neutral-800/80 rounded-xl p-4">
-            <div className="flex items-center justify-between text-xs font-mono mb-3 text-neutral-400">
-              <span className="text-white font-bold flex items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5 text-indigo-400" />
-                Pipeline: dispute_defense.pipe
-              </span>
-              <span>
-                {stage === 1 && 'Ingesting Signals...'}
-                {stage === 2 && 'Gemini LLM Synthesizing...'}
-                {stage === 3 && 'Awaiting Human Review'}
-                {stage === 4 && 'Submitting to Gateway...'}
-                {stage === 5 && 'Outcome: WON ($' + form.amount.toFixed(2) + ' Recovered)'}
-              </span>
-            </div>
-
-            <div className="grid grid-cols-5 gap-2 text-center text-[11px] font-mono">
-              <div
-                className={`py-1.5 px-1 rounded border transition ${
-                  stage >= 1
-                    ? 'bg-neutral-900 border-neutral-700 text-white font-semibold'
-                    : 'bg-black border-neutral-900 text-neutral-600'
-                }`}
-              >
-                1. Ingestion
-              </div>
-              <div
-                className={`py-1.5 px-1 rounded border transition ${
-                  stage >= 2
-                    ? 'bg-neutral-900 border-indigo-500/50 text-indigo-300 font-semibold'
-                    : 'bg-black border-neutral-900 text-neutral-600'
-                }`}
-              >
-                2. Gemini AI
-              </div>
-              <div
-                className={`py-1.5 px-1 rounded border transition ${
-                  stage >= 3
-                    ? 'bg-neutral-900 border-neutral-700 text-white font-semibold'
-                    : 'bg-black border-neutral-900 text-neutral-600'
-                }`}
-              >
-                3. Human Check
-              </div>
-              <div
-                className={`py-1.5 px-1 rounded border transition ${
-                  stage >= 4
-                    ? 'bg-neutral-900 border-neutral-700 text-white font-semibold'
-                    : 'bg-black border-neutral-900 text-neutral-600'
-                }`}
-              >
-                4. Gateway
-              </div>
-              <div
-                className={`py-1.5 px-1 rounded border transition ${
-                  stage === 5
-                    ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-400 font-semibold'
-                    : 'bg-black border-neutral-900 text-neutral-600'
-                }`}
-              >
-                5. Outcome & Learning
-              </div>
-            </div>
+      {/* Main Content */}
+      <main className="max-w-6xl mx-auto px-4 py-6 flex-1 w-full space-y-6">
+        {/* Real-time Ingestion Webhook Trigger Simulator Bar */}
+        <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-0.5">
+            <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-neutral-300 flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5 text-indigo-400" />
+              <span>Stripe Webhook Intake Simulator</span>
+            </h2>
+            <p className="text-[11px] text-neutral-500 font-mono">
+              Simulate signed Stripe webhook traffic (<code className="text-neutral-400">charge.dispute.created</code>) to test ingestion, enrichment, & scoring:
+            </p>
           </div>
-        )}
 
-        {/* STAGE 0: MINIMAL INPUT FORM */}
-        {stage === 0 && (
-          <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => triggerStripeWebhook('high_saas')}
+              className="px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 hover:border-indigo-500/50 text-[11px] font-mono text-neutral-200 transition cursor-pointer"
+            >
+              ⚡ High-Score SaaS ($450)
+            </button>
+            <button
+              onClick={() => triggerStripeWebhook('high_ecom')}
+              className="px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 hover:border-indigo-500/50 text-[11px] font-mono text-neutral-200 transition cursor-pointer"
+            >
+              📦 E-Com Delivery ($899)
+            </button>
+            <button
+              onClick={() => triggerStripeWebhook('low_evidence')}
+              className="px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 hover:border-rose-500/50 text-[11px] font-mono text-rose-400 transition cursor-pointer"
+            >
+              ⚠️ Low Score ($1,200)
+            </button>
+          </div>
+        </div>
+
+        {/* Live Operations Queue Table */}
+        <div className="bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-mono font-bold uppercase tracking-wider text-white">
+                Dispute Operations Queue
+              </span>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-neutral-900 text-neutral-400 border border-neutral-800">
+                {disputes.length} Active Records
+              </span>
+            </div>
+            <span className="text-[11px] font-mono text-neutral-500">
+              Auto-Refreshes on Ingestion
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs font-mono">
+              <thead>
+                <tr className="bg-black text-neutral-500 uppercase text-[10px] tracking-wider border-b border-neutral-800">
+                  <th className="p-3">Dispute ID</th>
+                  <th className="p-3">Reason</th>
+                  <th className="p-3">Customer</th>
+                  <th className="p-3">Amount</th>
+                  <th className="p-3">Evidence Score</th>
+                  <th className="p-3">Status</th>
+                  <th className="p-3">Deadline</th>
+                  <th className="p-3 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-900">
+                {disputes.map((d) => (
+                  <tr
+                    key={d.id}
+                    onClick={() => setSelectedDispute(d)}
+                    className="hover:bg-neutral-900/50 transition cursor-pointer group"
+                  >
+                    <td className="p-3 font-bold text-indigo-400 group-hover:text-indigo-300">
+                      {d.externalDisputeId}
+                    </td>
+                    <td className="p-3">
+                      <span className="px-2 py-0.5 rounded text-[10px] bg-neutral-900 text-neutral-300 border border-neutral-800">
+                        {d.reasonCanonical}
+                      </span>
+                    </td>
+                    <td className="p-3 text-neutral-200">
+                      <div>{d.customerName || 'Valued Customer'}</div>
+                      <div className="text-[10px] text-neutral-500">{d.customerEmail}</div>
+                    </td>
+                    <td className="p-3 font-bold text-white">
+                      ${(d.amountCents / 100).toFixed(2)} {d.currency}
+                    </td>
+                    <td className="p-3">
+                      {d.evidenceScore !== null && d.evidenceScore !== undefined ? (
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`font-bold ${
+                              d.evidenceScore >= 50 ? 'text-emerald-400' : 'text-rose-400'
+                            }`}
+                          >
+                            {d.evidenceScore}/100
+                          </span>
+                          <div className="w-12 h-1.5 bg-neutral-800 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full ${
+                                d.evidenceScore >= 50 ? 'bg-emerald-400' : 'bg-rose-400'
+                              }`}
+                              style={{ width: `${d.evidenceScore}%` }}
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-neutral-600">Pending</span>
+                      )}
+                    </td>
+                    <td className="p-3">
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
+                          d.status === 'DRAFTED'
+                            ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/30'
+                            : d.status === 'NEEDS_REVIEW'
+                            ? 'bg-rose-950/60 text-rose-400 border border-rose-500/30'
+                            : d.status === 'SUBMITTED'
+                            ? 'bg-indigo-950/60 text-indigo-400 border border-indigo-500/30'
+                            : 'bg-neutral-900 text-neutral-400 border border-neutral-800'
+                        }`}
+                      >
+                        {d.status}
+                      </span>
+                    </td>
+                    <td className="p-3 text-neutral-400 flex items-center gap-1">
+                      <Clock className="h-3 w-3 text-neutral-500" />
+                      <span>{d.hoursRemaining ?? 120}h left</span>
+                    </td>
+                    <td className="p-3 text-right">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedDispute(d);
+                        }}
+                        className="text-[11px] text-neutral-400 hover:text-white underline underline-offset-4"
+                      >
+                        Inspect
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Selected Dispute Detail Panel / Inspection Drawer */}
+        {selectedDispute && (
+          <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-6 space-y-6 animate-in fade-in duration-200">
+            <div className="flex items-center justify-between border-b border-neutral-800 pb-4">
               <div>
-                <h1 className="text-xl font-bold text-white tracking-tight">
-                  Enter Payment Dispute Details
-                </h1>
-                <p className="text-xs text-neutral-400 mt-0.5">
-                  Input customer and transaction signals to generate an AI representment package.
-                </p>
+                <span className="text-[10px] font-mono uppercase text-indigo-400 font-bold block">
+                  Dispute Case Dossier
+                </span>
+                <h3 className="text-lg font-bold text-white">
+                  {selectedDispute.externalDisputeId} — ${(selectedDispute.amountCents / 100).toFixed(2)} {selectedDispute.currency}
+                </h3>
               </div>
 
-              {/* Sample Fill Buttons */}
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleQuickFill('SaaS')}
-                  className="px-2.5 py-1 rounded-lg bg-neutral-900 border border-neutral-800 hover:border-neutral-700 text-[11px] font-medium text-neutral-300 transition cursor-pointer"
+                <span
+                  className={`px-2.5 py-1 rounded text-xs font-mono font-bold uppercase ${
+                    selectedDispute.status === 'DRAFTED'
+                      ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/30'
+                      : selectedDispute.status === 'NEEDS_REVIEW'
+                      ? 'bg-rose-950/60 text-rose-400 border border-rose-500/30'
+                      : selectedDispute.status === 'SUBMITTED'
+                      ? 'bg-indigo-950/60 text-indigo-400 border border-indigo-500/30'
+                      : 'bg-neutral-900 text-neutral-400'
+                  }`}
                 >
-                  + Sample SaaS ($450)
-                </button>
+                  Status: {selectedDispute.status}
+                </span>
                 <button
-                  type="button"
-                  onClick={() => handleQuickFill('E-Commerce')}
-                  className="px-2.5 py-1 rounded-lg bg-neutral-900 border border-neutral-800 hover:border-neutral-700 text-[11px] font-medium text-neutral-300 transition cursor-pointer"
+                  onClick={() => setSelectedDispute(null)}
+                  className="p-1 rounded bg-neutral-900 hover:bg-neutral-800 text-neutral-400 hover:text-white"
                 >
-                  + Sample E-Com ($899)
+                  <X className="h-4 w-4" />
                 </button>
               </div>
             </div>
 
-            <form
-              onSubmit={handleRunPipeline}
-              className="bg-neutral-950 border border-neutral-800/80 rounded-xl p-6 space-y-5"
-            >
-              {/* Row 1: Core Dispute Info */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-mono text-neutral-400 mb-1.5">
-                    Dispute Reference ID
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={form.disputeId}
-                    onChange={(e) => setForm({ ...form, disputeId: e.target.value })}
-                    className="w-full bg-black border border-neutral-800 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-neutral-600"
-                    placeholder="e.g. dp_109281"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-mono text-neutral-400 mb-1.5">
-                    Disputed Amount ($ USD)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    required
-                    value={form.amount}
-                    onChange={(e) => setForm({ ...form, amount: parseFloat(e.target.value) || 0 })}
-                    className="w-full bg-black border border-neutral-800 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-neutral-600"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-mono text-neutral-400 mb-1.5">
-                    Payment Processor
-                  </label>
-                  <select
-                    value={form.processor}
-                    onChange={(e) => setForm({ ...form, processor: e.target.value as any })}
-                    className="w-full bg-black border border-neutral-800 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-neutral-600"
-                  >
-                    <option value="Stripe">Stripe</option>
-                    <option value="Shopify">Shopify</option>
-                    <option value="PayPal">PayPal</option>
-                    <option value="Adyen">Adyen</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Row 2: Customer & Product Info */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-mono text-neutral-400 mb-1.5">
-                    Customer Full Name
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={form.customerName}
-                    onChange={(e) => setForm({ ...form, customerName: e.target.value })}
-                    className="w-full bg-black border border-neutral-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-neutral-600"
-                    placeholder="e.g. Alexander Vance"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-mono text-neutral-400 mb-1.5">
-                    Customer Email
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    value={form.customerEmail}
-                    onChange={(e) => setForm({ ...form, customerEmail: e.target.value })}
-                    className="w-full bg-black border border-neutral-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-neutral-600"
-                    placeholder="e.g. alex@vance.io"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-mono text-neutral-400 mb-1.5">
-                    Product / Subscription Item
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={form.orderItem}
-                    onChange={(e) => setForm({ ...form, orderItem: e.target.value })}
-                    className="w-full bg-black border border-neutral-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-neutral-600"
-                    placeholder="e.g. Pro Annual Plan"
-                  />
-                </div>
-              </div>
-
-              {/* Row 3: Dispute Reason & Security Verification */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-mono text-neutral-400 mb-1.5">
-                    Dispute Reason Code
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={form.reasonCode}
-                    onChange={(e) => setForm({ ...form, reasonCode: e.target.value })}
-                    className="w-full bg-black border border-neutral-800 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-neutral-600"
-                    placeholder="e.g. 10.4 Fraud - Card Absent"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-mono text-neutral-400 mb-1.5">
-                    Card Last 4 Digits
-                  </label>
-                  <input
-                    type="text"
-                    maxLength={4}
-                    value={form.cardLast4}
-                    onChange={(e) => setForm({ ...form, cardLast4: e.target.value })}
-                    className="w-full bg-black border border-neutral-800 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-neutral-600"
-                    placeholder="4242"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-mono text-neutral-400 mb-1.5">
-                    Business Type
-                  </label>
-                  <select
-                    value={form.businessType}
-                    onChange={(e) =>
-                      setForm({ ...form, businessType: e.target.value as 'SaaS' | 'E-Commerce' })
-                    }
-                    className="w-full bg-black border border-neutral-800 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-neutral-600"
-                  >
-                    <option value="SaaS">SaaS Platform (Digital)</option>
-                    <option value="E-Commerce">E-Commerce Store (Physical)</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Row 4: Evidence Signals (Dynamic based on SaaS vs Physical) */}
-              <div className="pt-2 border-t border-neutral-800/80">
-                <span className="block text-xs font-mono text-neutral-400 mb-3">
-                  {form.businessType === 'SaaS'
-                    ? 'SaaS Usage & Telemetry Signals:'
-                    : 'Physical Delivery Proof Signals:'}
+            {/* Grid Breakdown: Stage 4 Telemetry Signals & Stage 5 Evidence Score */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Left: Telemetry Signals */}
+              <div className="bg-black border border-neutral-800 rounded-xl p-4 space-y-3 font-mono text-xs">
+                <span className="text-neutral-400 font-bold uppercase tracking-wider block flex items-center gap-1.5">
+                  <Laptop className="h-3.5 w-3.5 text-indigo-400" />
+                  Stage 4: Telemetry Signals (Mock Analytics CRM)
                 </span>
 
-                {form.businessType === 'SaaS' ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-[11px] text-neutral-500 mb-1">
-                        Active Usage Hours Logged
-                      </label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={form.activeHours || 0}
-                        onChange={(e) =>
-                          setForm({ ...form, activeHours: parseFloat(e.target.value) || 0 })
-                        }
-                        className="w-full bg-black border border-neutral-800 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-neutral-600"
-                      />
+                {selectedDispute.telemetrySignals && selectedDispute.telemetrySignals.length > 0 ? (
+                  <div className="space-y-2 text-neutral-300">
+                    <div className="flex justify-between">
+                      <span className="text-neutral-500">Active Usage Hours:</span>
+                      <span className="font-bold text-white">
+                        {selectedDispute.telemetrySignals[0].usageHours ?? 0} hrs
+                      </span>
                     </div>
-
-                    <div className="flex items-center gap-2 pt-5">
-                      <input
-                        type="checkbox"
-                        id="2fa"
-                        checked={form.twoFactorVerified}
-                        onChange={(e) => setForm({ ...form, twoFactorVerified: e.target.checked })}
-                        className="rounded border-neutral-800 bg-black text-indigo-500 focus:ring-0"
-                      />
-                      <label htmlFor="2fa" className="text-xs text-neutral-300">
-                        2-Factor Authentication Verified
-                      </label>
+                    <div className="flex justify-between">
+                      <span className="text-neutral-500">2-Factor Authentication:</span>
+                      <span className={selectedDispute.telemetrySignals[0].twoFactorUsed ? 'text-emerald-400' : 'text-rose-400'}>
+                        {selectedDispute.telemetrySignals[0].twoFactorUsed ? '✔ VERIFIED' : '✖ NOT USED'}
+                      </span>
                     </div>
-
-                    <div className="flex items-center gap-2 pt-5">
-                      <input
-                        type="checkbox"
-                        id="avs"
-                        checked={form.avsMatch}
-                        onChange={(e) => setForm({ ...form, avsMatch: e.target.checked })}
-                        className="rounded border-neutral-800 bg-black text-indigo-500 focus:ring-0"
-                      />
-                      <label htmlFor="avs" className="text-xs text-neutral-300">
-                        AVS & CVV Full Match
-                      </label>
+                    <div className="flex justify-between">
+                      <span className="text-neutral-500">AVS Address Match:</span>
+                      <span className={selectedDispute.telemetrySignals[0].avsMatch ? 'text-emerald-400' : 'text-rose-400'}>
+                        {selectedDispute.telemetrySignals[0].avsMatch ? '✔ PASS' : '✖ NO MATCH'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-neutral-500">CVV Security Check:</span>
+                      <span className={selectedDispute.telemetrySignals[0].cvvMatch ? 'text-emerald-400' : 'text-rose-400'}>
+                        {selectedDispute.telemetrySignals[0].cvvMatch ? '✔ PASS' : '✖ NO MATCH'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-neutral-500">Authenticated Sessions:</span>
+                      <span className="text-white">
+                        {selectedDispute.telemetrySignals[0].sessionCount ?? 1} sessions
+                      </span>
                     </div>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-[11px] text-neutral-500 mb-1">Carrier Name</label>
-                      <input
-                        type="text"
-                        value={form.carrier || ''}
-                        onChange={(e) => setForm({ ...form, carrier: e.target.value })}
-                        className="w-full bg-black border border-neutral-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-neutral-600"
-                        placeholder="FedEx Priority"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] text-neutral-500 mb-1">
-                        Tracking Number
-                      </label>
-                      <input
-                        type="text"
-                        value={form.trackingNumber || ''}
-                        onChange={(e) => setForm({ ...form, trackingNumber: e.target.value })}
-                        className="w-full bg-black border border-neutral-800 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-neutral-600"
-                        placeholder="781290481290"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] text-neutral-500 mb-1">
-                        Recipient Signature
-                      </label>
-                      <input
-                        type="text"
-                        value={form.recipientSignature || ''}
-                        onChange={(e) => setForm({ ...form, recipientSignature: e.target.value })}
-                        className="w-full bg-black border border-neutral-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-neutral-600"
-                        placeholder="e.g. S. CHEN"
-                      />
-                    </div>
-                  </div>
+                  <p className="text-neutral-500">Enriching telemetry signals...</p>
                 )}
               </div>
 
-              {/* Submit CTA */}
-              <div className="pt-3 flex justify-end">
-                <button
-                  type="submit"
-                  className="flex items-center gap-2 px-6 py-2.5 rounded-lg bg-white hover:bg-neutral-200 text-black font-bold text-xs transition cursor-pointer"
-                >
-                  <span>Execute RocketRide Pipeline</span>
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
-
-        {/* STAGE 1 & 2: LOADING SKELETON */}
-        {(stage === 1 || stage === 2) && (
-          <div className="bg-neutral-950 border border-neutral-800/80 rounded-xl p-12 text-center space-y-4">
-            <div className="h-10 w-10 mx-auto rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
-            <div>
-              <p className="text-sm font-bold text-white">
-                {stage === 1
-                  ? 'Correlating Multi-System Customer Signals...'
-                  : 'Google Gemini (gemini-2_5-flash) Synthesizing Evidence Exhibits...'}
-              </p>
-              <p className="text-xs text-neutral-500 font-mono mt-1">
-                Executing {stage === 1 ? 'dispute_triage.pipe' : 'dispute_defense.pipe'} via
-                RocketRide
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* STAGE 3: EVIDENCE RESULTS & MANDATORY HUMAN REVIEW GATE */}
-        {stage === 3 && evidence && (
-          <div className="space-y-6 animate-in fade-in duration-300">
-            {/* Top Bar: Win Probability & Strategy */}
-            <div className="bg-neutral-950 border border-neutral-800/80 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <span className="text-[10px] font-mono uppercase tracking-wider text-indigo-400">
-                  AI Defense Strategy Formulated
+              {/* Right: Stage 5 Evidence Strength Scoring Engine */}
+              <div className="bg-black border border-neutral-800 rounded-xl p-4 space-y-3 font-mono text-xs">
+                <span className="text-neutral-400 font-bold uppercase tracking-wider block flex items-center gap-1.5">
+                  <Scale className="h-3.5 w-3.5 text-emerald-400" />
+                  Stage 5: Deterministic Evidence Score
                 </span>
-                <h3 className="text-sm font-bold text-white mt-0.5">{evidence.strategy}</h3>
-              </div>
 
-              <div className="flex items-center gap-2 bg-neutral-900 border border-neutral-800 px-3.5 py-2 rounded-lg shrink-0">
-                <Scale className="h-4 w-4 text-emerald-400" />
-                <div>
-                  <span className="text-[10px] font-mono uppercase text-neutral-400 block leading-none">
-                    Estimated Win Rate
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-2xl font-black text-white">
+                    {selectedDispute.evidenceScore ?? 0}
+                    <span className="text-sm font-normal text-neutral-500"> / 100</span>
                   </span>
-                  <span className="text-base font-black text-emerald-400">
-                    {(evidence.winProbability * 100).toFixed(0)}%
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Generated Exhibits */}
-            <div className="space-y-2">
-              <span className="text-xs font-mono text-neutral-400 uppercase tracking-wider block">
-                Generated Exhibits ({evidence.exhibits.length}):
-              </span>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {evidence.exhibits.map((ex, idx) => (
-                  <div
-                    key={idx}
-                    className="bg-neutral-950 border border-neutral-800/80 p-4 rounded-xl space-y-1.5"
+                  <span
+                    className={`px-2.5 py-1 rounded text-xs font-bold ${
+                      (selectedDispute.evidenceScore ?? 0) >= 50
+                        ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/30'
+                        : 'bg-rose-950/60 text-rose-400 border border-rose-500/30'
+                    }`}
                   >
-                    <div className="flex justify-between items-center text-[10px] font-mono">
-                      <span className="text-indigo-400 font-bold">Exhibit {idx + 1}</span>
-                      <span className="text-neutral-500">{ex.category}</span>
-                    </div>
-                    <h4 className="text-xs font-bold text-neutral-200 line-clamp-1">{ex.title}</h4>
-                    <p className="text-[11px] text-neutral-400 leading-relaxed">{ex.summary}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Rebuttal Letter (Editable) */}
-            <div className="bg-neutral-950 border border-neutral-800/80 rounded-xl overflow-hidden">
-              <div className="p-3 bg-neutral-900/60 border-b border-neutral-800 flex items-center justify-between">
-                <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-indigo-400" />
-                  Legal Representment Statement ({form.processor} Format)
-                </span>
-                <button
-                  type="button"
-                  onClick={handleCopy}
-                  className="flex items-center gap-1 text-[11px] font-mono text-neutral-300 hover:text-white px-2.5 py-1 rounded bg-neutral-800 hover:bg-neutral-700 transition cursor-pointer"
-                >
-                  {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                  <span>{copied ? 'Copied' : 'Copy'}</span>
-                </button>
-              </div>
-
-              <div className="p-4 font-mono text-xs text-neutral-300">
-                <textarea
-                  rows={10}
-                  value={editableLetter}
-                  onChange={(e) => setEditableLetter(e.target.value)}
-                  className="w-full bg-black border border-neutral-800 rounded-lg p-3 text-xs font-mono text-neutral-200 focus:outline-none focus:border-neutral-600 leading-relaxed"
-                />
-              </div>
-            </div>
-
-            {/* Mandatory Human-in-the-Loop Review Form */}
-            <form
-              onSubmit={handleApprove}
-              className="bg-neutral-950 border border-indigo-500/30 rounded-xl p-5 space-y-4"
-            >
-              <div className="flex items-center justify-between border-b border-neutral-800/80 pb-3">
-                <div className="flex items-center gap-2">
-                  <UserCheck className="h-4 w-4 text-indigo-400" />
-                  <span className="text-xs font-bold text-white">
-                    Mandatory Human Review Gate (HITL)
+                    {(selectedDispute.evidenceScore ?? 0) >= 50
+                      ? 'HIGH STRENGTH (≥ 50)'
+                      : 'LOW STRENGTH (< 50)'}
                   </span>
                 </div>
-                <span className="text-[11px] font-mono text-amber-400 flex items-center gap-1">
-                  <Clock className="h-3 w-3" /> SLA: 6 Days Remaining
-                </span>
-              </div>
 
-              <div className="flex flex-col sm:flex-row gap-3 items-end">
-                <div className="flex-1 w-full">
-                  <label className="block text-xs font-mono text-neutral-400 mb-1">
-                    Enter Compliance Officer Name for Sign-Off:
-                  </label>
+                <p className="text-[11px] text-neutral-400 leading-relaxed">
+                  {(selectedDispute.evidenceScore ?? 0) >= 50
+                    ? '✔ Score meets confidence threshold (≥ 50). Google Gemini auto-drafted legal representment package.'
+                    : '⚠️ Low confidence score (< 50). Flagged for human-in-the-loop review before drafting weak rebuttals.'}
+                </p>
+              </div>
+            </div>
+
+            {/* Stage 6: Generated Rebuttal Draft */}
+            {selectedDispute.rebuttalDraft && (
+              <div className="bg-black border border-neutral-800 rounded-xl overflow-hidden font-mono text-xs">
+                <div className="p-3 bg-neutral-900 border-b border-neutral-800 flex items-center justify-between">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <FileCode className="h-3.5 w-3.5 text-indigo-400" />
+                    Stage 6: Gemini 2.5 Flash Representment Statement
+                  </span>
+                  <button
+                    onClick={() => handleCopy(selectedDispute.rebuttalDraft!)}
+                    className="flex items-center gap-1 text-[11px] text-neutral-300 hover:text-white px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 transition cursor-pointer"
+                  >
+                    {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                    <span>{copied ? 'Copied' : 'Copy'}</span>
+                  </button>
+                </div>
+                <div className="p-4 max-h-56 overflow-y-auto text-neutral-300 whitespace-pre-wrap leading-relaxed">
+                  {selectedDispute.rebuttalDraft}
+                </div>
+              </div>
+            )}
+
+            {/* Human Sign-Off / Approval Action Bar */}
+            {selectedDispute.status !== 'SUBMITTED' ? (
+              <div className="bg-neutral-900/60 border border-indigo-500/30 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 font-mono text-xs">
+                <div className="space-y-0.5">
+                  <span className="font-bold text-white flex items-center gap-1.5">
+                    <UserCheck className="h-4 w-4 text-indigo-400" />
+                    Human Reviewer Sign-Off Gate
+                  </span>
+                  <p className="text-[11px] text-neutral-400">
+                    A human checks and signs off before transmitting to {selectedDispute.processor} API.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 w-full sm:w-auto">
                   <input
                     type="text"
-                    required
                     value={reviewerName}
                     onChange={(e) => setReviewerName(e.target.value)}
-                    className="w-full bg-black border border-neutral-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-neutral-600"
-                    placeholder="e.g. Sarah Chen (Risk Lead)"
+                    className="bg-black border border-neutral-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-neutral-500 w-full sm:w-48"
+                    placeholder="Reviewer Name"
                   />
+                  <button
+                    onClick={() => handleApproveDispute(selectedDispute.id)}
+                    disabled={submittingReview}
+                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-white hover:bg-neutral-200 text-black font-bold transition cursor-pointer shrink-0"
+                  >
+                    <CheckCircle className="h-3.5 w-3.5" />
+                    <span>{submittingReview ? 'Submitting...' : 'Sign Off & Submit'}</span>
+                  </button>
                 </div>
-
-                <button
-                  type="submit"
-                  className="w-full sm:w-auto px-6 py-2 rounded-lg bg-white hover:bg-neutral-200 text-black font-bold text-xs transition cursor-pointer shrink-0"
-                >
-                  Verify & Transmit to {form.processor}
-                </button>
               </div>
-            </form>
-          </div>
-        )}
-
-        {/* STAGE 4: TRANSMITTING */}
-        {stage === 4 && (
-          <div className="bg-neutral-950 border border-neutral-800/80 rounded-xl p-12 text-center space-y-4">
-            <div className="h-8 w-8 mx-auto rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
-            <p className="text-sm font-bold text-white">
-              Transmitting Approved Evidence Package to {form.processor} API...
-            </p>
-          </div>
-        )}
-
-        {/* STAGE 5: OUTCOME WON, REVENUE & LEARNING LOOP */}
-        {stage === 5 && (
-          <div className="space-y-6 animate-in fade-in duration-300">
-            {/* Win Header */}
-            <div className="bg-neutral-950 border border-emerald-500/40 rounded-xl p-6 text-center space-y-2">
-              <span className="text-[11px] font-mono uppercase tracking-wider text-emerald-400 font-bold">
-                Resolution Verdict
-              </span>
-              <h2 className="text-2xl font-black text-white">
-                DISPUTE WON — ${form.amount.toFixed(2)} USD RECOVERED
-              </h2>
-              <p className="text-xs text-neutral-400">
-                Evidence accepted by {form.processor} issuing bank. Full funds released to merchant.
-              </p>
-            </div>
-
-            {/* Commercial Revenue Breakdown */}
-            <div className="bg-neutral-950 border border-neutral-800/80 rounded-xl p-5 space-y-3">
-              <div className="flex items-center justify-between border-b border-neutral-800/80 pb-2">
-                <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                  <DollarSign className="h-3.5 w-3.5 text-indigo-400" />
-                  DisputeRocket Monetization Ledger
+            ) : (
+              <div className="bg-emerald-950/40 border border-emerald-500/40 rounded-xl p-4 flex items-center justify-between font-mono text-xs text-emerald-400">
+                <span className="flex items-center gap-1.5 font-bold">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                  Successfully Submitted to {selectedDispute.processor} API! (Signed by {selectedDispute.reviewedBy || 'Reviewer'})
                 </span>
-                <span className="text-[10px] font-mono text-neutral-500">
-                  Ref: {form.disputeId}
-                </span>
+                <span className="text-[11px] text-neutral-400">Status: SUBMITTED</span>
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 text-xs font-mono pt-1">
-                <div>
-                  <span className="text-neutral-500 block">Base Job Fee</span>
-                  <span className="font-bold text-white">${flatFee.toFixed(2)} USD</span>
-                </div>
-                <div>
-                  <span className="text-neutral-500 block">Contingency (15%)</span>
-                  <span className="font-bold text-white">${contingencyFee.toFixed(2)} USD</span>
-                </div>
-                <div>
-                  <span className="text-indigo-400 block">Platform Revenue</span>
-                  <span className="font-black text-indigo-400 text-sm">
-                    ${totalRevenue.toFixed(2)} USD
-                  </span>
-                </div>
-                <div>
-                  <span className="text-emerald-400 block">Net Merchant Saved</span>
-                  <span className="font-black text-emerald-400 text-sm">
-                    ${netSaved.toFixed(2)} USD
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Continual Learning Feedback */}
-            <div className="bg-neutral-950 border border-neutral-800/80 rounded-xl p-5 space-y-2 text-xs">
-              <span className="text-neutral-400 font-bold block flex items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5 text-purple-400" />
-                Outcome Learning Heuristics (dispute_learning.pipe):
-              </span>
-              <p className="text-neutral-300 leading-relaxed">
-                ✔ Key winning factor: AVS/CVV authorization match combined with{' '}
-                {form.businessType === 'SaaS'
-                  ? `${form.activeHours} hours authenticated telemetry`
-                  : `carrier tracking delivery signature`}
-                .
-              </p>
-              <p className="text-neutral-400">
-                Pattern stored in customer record to maximize win rates on future disputes under
-                reason code "{form.reasonCode}".
-              </p>
-            </div>
-
-            <div className="flex justify-center pt-2">
-              <button
-                type="button"
-                onClick={handleReset}
-                className="px-6 py-2.5 rounded-lg bg-white hover:bg-neutral-200 text-black font-bold text-xs transition cursor-pointer"
-              >
-                Process Another Dispute
-              </button>
-            </div>
+            )}
           </div>
         )}
       </main>
 
+      {/* Manual Override Modal */}
+      {isManualModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="bg-neutral-950 border border-neutral-800 rounded-xl max-w-lg w-full p-6 space-y-4 font-mono text-xs">
+            <div className="flex justify-between items-center border-b border-neutral-800 pb-3">
+              <span className="font-bold text-white text-sm flex items-center gap-1.5">
+                <Plus className="h-4 w-4 text-indigo-400" />
+                Manual Override Input Path
+              </span>
+              <button
+                onClick={() => setIsManualModalOpen(false)}
+                className="text-neutral-400 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleManualSubmit} className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-neutral-500 mb-1">Customer Name:</label>
+                  <input
+                    type="text"
+                    required
+                    value={manualForm.customerName}
+                    onChange={(e) => setManualForm({ ...manualForm, customerName: e.target.value })}
+                    className="w-full bg-black border border-neutral-800 rounded px-2.5 py-1.5 text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-neutral-500 mb-1">Customer Email:</label>
+                  <input
+                    type="email"
+                    required
+                    value={manualForm.customerEmail}
+                    onChange={(e) => setManualForm({ ...manualForm, customerEmail: e.target.value })}
+                    className="w-full bg-black border border-neutral-800 rounded px-2.5 py-1.5 text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-neutral-500 mb-1">Amount ($ USD):</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    value={manualForm.amount}
+                    onChange={(e) => setManualForm({ ...manualForm, amount: parseFloat(e.target.value) || 0 })}
+                    className="w-full bg-black border border-neutral-800 rounded px-2.5 py-1.5 text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-neutral-500 mb-1">Card Last 4:</label>
+                  <input
+                    type="text"
+                    maxLength={4}
+                    value={manualForm.cardLast4}
+                    onChange={(e) => setManualForm({ ...manualForm, cardLast4: e.target.value })}
+                    className="w-full bg-black border border-neutral-800 rounded px-2.5 py-1.5 text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-neutral-500 mb-1">Active Hours:</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={manualForm.activeHours}
+                    onChange={(e) => setManualForm({ ...manualForm, activeHours: parseFloat(e.target.value) || 0 })}
+                    className="w-full bg-black border border-neutral-800 rounded px-2.5 py-1.5 text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 pt-2">
+                <label className="flex items-center gap-1.5 text-neutral-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={manualForm.twoFactorVerified}
+                    onChange={(e) => setManualForm({ ...manualForm, twoFactorVerified: e.target.checked })}
+                    className="rounded bg-black border-neutral-700 text-indigo-500"
+                  />
+                  <span>2FA Verified</span>
+                </label>
+
+                <label className="flex items-center gap-1.5 text-neutral-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={manualForm.avsMatch}
+                    onChange={(e) => setManualForm({ ...manualForm, avsMatch: e.target.checked })}
+                    className="rounded bg-black border-neutral-700 text-indigo-500"
+                  />
+                  <span>AVS & CVV Match</span>
+                </label>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-neutral-800">
+                <button
+                  type="button"
+                  onClick={() => setIsManualModalOpen(false)}
+                  className="px-3 py-1.5 rounded bg-neutral-900 hover:bg-neutral-800 text-neutral-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded bg-white hover:bg-neutral-200 text-black font-bold"
+                >
+                  Ingest & Process
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Minimal Footer */}
-      <footer className="border-t border-neutral-900 py-4 mt-auto">
-        <div className="max-w-5xl mx-auto px-4 flex justify-between items-center text-[11px] text-neutral-600 font-mono">
-          <span>DisputeRocket • RocketRide + Google Gemini</span>
+      <footer className="border-t border-neutral-900 py-3 mt-auto">
+        <div className="max-w-6xl mx-auto px-4 flex justify-between items-center text-[10px] text-neutral-600 font-mono">
+          <span>DisputeRocket • Ingestion, Telemetry Enrichment & Evidence Scoring Pipeline</span>
           <span>Rocket Ride Hackathon</span>
         </div>
       </footer>
