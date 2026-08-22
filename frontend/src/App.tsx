@@ -230,90 +230,73 @@ export function App() {
     setCurrentUser(null);
   };
 
-  // Trigger Real Stripe Webhook
+  // Trigger Ingestion Simulator
   const triggerStripeWebhook = async (type: 'high_saas' | 'high_ecom' | 'low_evidence') => {
+    const rand = Math.floor(1000 + Math.random() * 9000);
     let payload;
+
     if (type === 'high_saas') {
-      const rand = Math.floor(1000 + Math.random() * 9000);
       payload = {
-        id: `evt_stripe_webhook_${rand}`,
-        type: 'charge.dispute.created',
-        data: {
-          object: {
-            id: `dp_stripe_${rand}`,
-            amount: 45000,
-            currency: 'usd',
-            reason: 'fraudulent',
-            charge: `ch_saas_${rand}`,
-            created: Math.floor(Date.now() / 1000),
-            evidence_details: { due_by: Math.floor(Date.now() / 1000) + 7 * 86400 },
-            evidence: {
-              billing_address: { name: 'Alexander Vance' },
-              customer_email_address: 'alex.vance@vancemedia.io',
-            },
-            payment_method_details: { card: { last4: '8819' } },
-            metadata: { business_type: 'SaaS' },
-          },
-        },
+        disputeId: `dp_saas_${rand}`,
+        customerName: 'Alexander Vance',
+        customerEmail: 'alex.vance@vancemedia.io',
+        amount: 450.0,
+        currency: 'USD',
+        processor: 'Stripe',
+        reasonCode: '10.4_FRAUD_CARD_ABSENT',
+        cardLast4: '8819',
+        businessType: 'SaaS',
+        activeHours: 38.5,
+        twoFactorVerified: true,
+        avsMatch: true,
+        cvvMatch: true,
       };
     } else if (type === 'high_ecom') {
-      const rand = Math.floor(1000 + Math.random() * 9000);
       payload = {
-        id: `evt_stripe_webhook_${rand}`,
-        type: 'charge.dispute.created',
-        data: {
-          object: {
-            id: `dp_stripe_${rand}`,
-            amount: 89900,
-            currency: 'usd',
-            reason: 'product_not_received',
-            charge: `ch_ecom_${rand}`,
-            created: Math.floor(Date.now() / 1000),
-            evidence_details: { due_by: Math.floor(Date.now() / 1000) + 5 * 86400 },
-            evidence: {
-              billing_address: { name: 'Sarah Chen' },
-              customer_email_address: 'sarah.chen@studioaudio.com',
-            },
-            payment_method_details: { card: { last4: '1092' } },
-            metadata: { business_type: 'E-Commerce' },
-          },
-        },
+        disputeId: `dp_ecom_${rand}`,
+        customerName: 'Sarah Chen',
+        customerEmail: 'sarah.chen@studioaudio.com',
+        amount: 899.0,
+        currency: 'USD',
+        processor: 'Shopify',
+        reasonCode: '13.1_MERCHANDISE_NOT_RECEIVED',
+        cardLast4: '1092',
+        businessType: 'E-Commerce',
+        activeHours: 0,
+        twoFactorVerified: false,
+        avsMatch: true,
+        cvvMatch: true,
       };
     } else {
-      const rand = Math.floor(1000 + Math.random() * 9000);
       payload = {
-        id: `evt_stripe_webhook_${rand}`,
-        type: 'charge.dispute.created',
-        data: {
-          object: {
-            id: `dp_stripe_${rand}`,
-            amount: 120000,
-            currency: 'usd',
-            reason: 'fraudulent',
-            charge: `ch_fraud_${rand}`,
-            created: Math.floor(Date.now() / 1000),
-            evidence_details: { due_by: Math.floor(Date.now() / 1000) + 3 * 86400 },
-            evidence: {
-              billing_address: { name: 'Suspicious Buyer' },
-              customer_email_address: 'fraud_account@disposable.com',
-            },
-            payment_method_details: { card: { last4: '0000' } },
-            metadata: { business_type: 'SaaS' },
-          },
-        },
+        disputeId: `dp_fraud_${rand}`,
+        customerName: 'Suspicious Buyer',
+        customerEmail: 'fraud_account@disposable.com',
+        amount: 1200.0,
+        currency: 'USD',
+        processor: 'Stripe',
+        reasonCode: '10.4_FRAUD_CARD_ABSENT',
+        cardLast4: '0000',
+        businessType: 'SaaS',
+        activeHours: 0.1,
+        twoFactorVerified: false,
+        avsMatch: false,
+        cvvMatch: false,
       };
     }
 
     try {
-      await fetch(`${API_BASE}/webhooks/stripe`, {
+      const res = await fetch(`${API_BASE}/api/disputes/manual`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify(payload),
       });
-      setTimeout(fetchDisputes, 1000);
+      if (res.ok) {
+        fetchDisputes();
+      }
     } catch {
-      alert('Backend server running on http://localhost:3001 is required for live webhook ingestion.');
+      alert('Error communicating with backend server.');
     }
   };
 
