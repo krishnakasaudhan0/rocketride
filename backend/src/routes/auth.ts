@@ -11,14 +11,14 @@ const COOKIE_NAME = 'token';
 
 const getCookieOptions = () => ({
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'lax' as const,
+  secure: true,
+  sameSite: 'none' as const,
   maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
 });
 
 /**
  * POST /auth/register
- * Creates a new user with bcrypt password hashing and sets auth cookie.
+ * Creates a new user with bcrypt password hashing and sets auth cookie + returns token.
  */
 authRouter.post('/register', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -75,6 +75,7 @@ authRouter.post('/register', async (req: Request, res: Response): Promise<void> 
     res.status(201).json({
       message: 'Account registered successfully.',
       user,
+      token,
     });
   } catch (err: any) {
     console.error('[Auth Register Error]:', err);
@@ -84,7 +85,7 @@ authRouter.post('/register', async (req: Request, res: Response): Promise<void> 
 
 /**
  * POST /auth/login
- * Verifies email/password and returns JWT cookie.
+ * Verifies email/password and returns JWT cookie + token.
  */
 authRouter.post('/login', loginRateLimiter, async (req: Request, res: Response): Promise<void> => {
   try {
@@ -128,6 +129,7 @@ authRouter.post('/login', loginRateLimiter, async (req: Request, res: Response):
         name: user.name,
         role: user.role,
       },
+      token,
     });
   } catch (err: any) {
     console.error('[Auth Login Error]:', err);
@@ -142,8 +144,8 @@ authRouter.post('/login', loginRateLimiter, async (req: Request, res: Response):
 authRouter.post('/logout', (req: Request, res: Response): void => {
   res.clearCookie(COOKIE_NAME, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: true,
+    sameSite: 'none',
   });
   res.json({ message: 'Logged out successfully.' });
 });

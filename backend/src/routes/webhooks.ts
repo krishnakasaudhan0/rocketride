@@ -20,9 +20,7 @@ webhookRouter.post('/stripe', async (req: Request, res: Response): Promise<void>
   const sig = req.headers['stripe-signature'] as string | undefined;
   const rawBody = req.body; // Buffer from express.raw()
 
-  const isDevBypassAllowed =
-    process.env.NODE_ENV === 'development' &&
-    process.env.ALLOW_UNSIGNED_WEBHOOKS === 'true';
+  const isBypassAllowed = process.env.ALLOW_UNSIGNED_WEBHOOKS === 'true';
 
   let event: Stripe.Event;
 
@@ -30,9 +28,9 @@ webhookRouter.post('/stripe', async (req: Request, res: Response): Promise<void>
 
   // 1. Signature Verification Boundary
   if (!isSecretConfigured || !sig) {
-    if (isDevBypassAllowed) {
+    if (isBypassAllowed) {
       console.warn(
-        '[Stripe Webhook] WARNING: Bypassing signature verification (NODE_ENV=development and ALLOW_UNSIGNED_WEBHOOKS=true). Do not use in production!'
+        '[Stripe Webhook] WARNING: Bypassing signature verification (ALLOW_UNSIGNED_WEBHOOKS=true is enabled).'
       );
       try {
         const payloadStr = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : JSON.stringify(rawBody || {});
@@ -52,9 +50,9 @@ webhookRouter.post('/stripe', async (req: Request, res: Response): Promise<void>
     try {
       event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret!);
     } catch (err: any) {
-      if (isDevBypassAllowed) {
+      if (isBypassAllowed) {
         console.warn(
-          `[Stripe Webhook] WARNING: constructEvent failed (${err.message}), but bypassing due to ALLOW_UNSIGNED_WEBHOOKS=true in development.`
+          `[Stripe Webhook] WARNING: constructEvent failed (${err.message}), but bypassing due to ALLOW_UNSIGNED_WEBHOOKS=true.`
         );
         try {
           const payloadStr = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : JSON.stringify(rawBody || {});

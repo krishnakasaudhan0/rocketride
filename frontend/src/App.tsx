@@ -64,6 +64,19 @@ interface User {
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3001';
 
+const authFetch = (url: string, options: RequestInit = {}) => {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('disputerocket_token') : null;
+  const headers = new Headers(options.headers || {});
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  return fetch(url, {
+    ...options,
+    headers,
+    credentials: 'include',
+  });
+};
+
 export function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authChecking, setAuthChecking] = useState<boolean>(true);
@@ -101,11 +114,12 @@ export function App() {
   // Check auth session
   const checkAuth = async () => {
     try {
-      const res = await fetch(`${API_BASE}/auth/me`, { credentials: 'include' });
+      const res = await authFetch(`${API_BASE}/auth/me`);
       if (res.ok) {
         const data = await res.json();
         setCurrentUser(data.user);
       } else {
+        localStorage.removeItem('disputerocket_token');
         setCurrentUser(null);
       }
     } catch {
@@ -123,7 +137,7 @@ export function App() {
   const fetchDisputes = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/disputes`, { credentials: 'include' });
+      const res = await authFetch(`${API_BASE}/api/disputes`);
       if (res.ok) {
         const data = await res.json();
         setDisputes(data);
@@ -196,10 +210,9 @@ export function App() {
           ? { email: authEmail, password: authPassword, name: authName }
           : { email: authEmail, password: authPassword };
 
-      const res = await fetch(`${API_BASE}${endpoint}`, {
+      const res = await authFetch(`${API_BASE}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify(body),
       });
 
@@ -207,6 +220,10 @@ export function App() {
       if (!res.ok) {
         setAuthError(data.error || 'Authentication failed. Please check your credentials.');
         return;
+      }
+
+      if (data.token) {
+        localStorage.setItem('disputerocket_token', data.token);
       }
 
       setCurrentUser(data.user);
@@ -222,11 +239,11 @@ export function App() {
 
   const handleLogout = async () => {
     try {
-      await fetch(`${API_BASE}/auth/logout`, {
+      await authFetch(`${API_BASE}/auth/logout`, {
         method: 'POST',
-        credentials: 'include',
       });
     } catch {}
+    localStorage.removeItem('disputerocket_token');
     setCurrentUser(null);
   };
 
@@ -286,17 +303,19 @@ export function App() {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/api/disputes/manual`, {
+      const res = await authFetch(`${API_BASE}/api/disputes/manual`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify(payload),
       });
       if (res.ok) {
         fetchDisputes();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(`Error ingesting dispute: ${errData.error || res.statusText}`);
       }
-    } catch {
-      alert('Error communicating with backend server.');
+    } catch (err: any) {
+      alert(`Error communicating with backend server: ${err.message}`);
     }
   };
 
@@ -304,18 +323,20 @@ export function App() {
   const handleManualSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch(`${API_BASE}/api/disputes/manual`, {
+      const res = await authFetch(`${API_BASE}/api/disputes/manual`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify(manualForm),
       });
       if (res.ok) {
         setIsManualModalOpen(false);
         fetchDisputes();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(`Error creating manual dispute: ${errData.error || res.statusText}`);
       }
-    } catch {
-      alert('Backend server error. Make sure Bun backend is running on port 3001.');
+    } catch (err: any) {
+      alert(`Backend server error: ${err.message}`);
     }
   };
 
@@ -323,10 +344,9 @@ export function App() {
   const handleApproveDispute = async (id: string) => {
     setSubmittingReview(true);
     try {
-      const res = await fetch(`${API_BASE}/api/disputes/${id}/approve`, {
+      const res = await authFetch(`${API_BASE}/api/disputes/${id}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({
           notes: 'Verified AVS/CVV matching, 2FA logs, and user telemetry. Approved.',
         }),
@@ -339,7 +359,12 @@ export function App() {
           colors: ['#6366f1', '#10b981', '#ffffff'],
         });
         fetchDisputes();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(`Error approving dispute: ${errData.error || res.statusText}`);
       }
+    } catch (err: any) {
+      alert(`Error submitting review: ${err.message}`);
     } finally {
       setSubmittingReview(false);
     }
